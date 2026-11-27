@@ -2,6 +2,7 @@
 
 (() => {
   const STORAGE_KEY = "yamlConfig";
+  const storageKeyForUrl = (url) => (url ? `${STORAGE_KEY}:${url.split("#")[0]}` : STORAGE_KEY);
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
   const DEFAULT_START_NUMBER = 1;
@@ -30,6 +31,7 @@
   const errorBox = document.getElementById("error-message");
 
   let saveTimerId = null;
+  let currentStorageKey = STORAGE_KEY;
 
   const setBoxMessage = (box, text, type) => {
     if (!text) {
@@ -210,9 +212,9 @@
     return { rules, startNumber, numberingMode, rounded, warnings };
   };
 
-  const saveYamlImmediate = async (value) => {
+  const saveYamlImmediate = async (storageKey, value) => {
     try {
-      await chrome.storage.local.set({ [STORAGE_KEY]: value });
+      await chrome.storage.local.set({ [storageKey]: value });
     } catch (error) {
       console.error("[Webpage Annotator] Failed to save YAML:", error);
     }
@@ -222,23 +224,29 @@
     if (saveTimerId !== null) {
       window.clearTimeout(saveTimerId);
     }
+    // 保存先は入力時点のURLに固定する（タブ切替中に別URLへ混入させない）
+    const storageKey = currentStorageKey;
     saveTimerId = window.setTimeout(() => {
       saveTimerId = null;
-      saveYamlImmediate(value);
+      saveYamlImmediate(storageKey, value);
     }, 200);
   };
 
   const restoreYaml = async () => {
+    let storageKey = STORAGE_KEY;
     try {
-      const stored = await chrome.storage.local.get([STORAGE_KEY]);
-      if (typeof stored[STORAGE_KEY] === "string") {
-        yamlInput.value = stored[STORAGE_KEY];
-      } else {
-        yamlInput.value = DEFAULT_YAML;
-      }
+      const tab = await getActiveTab();
+      storageKey = storageKeyForUrl(tab && tab.url);
+      // 旧バージョンのグローバル設定は、URL別の設定がない場合のみ引き継ぐ
+      const stored = await chrome.storage.local.get([storageKey, STORAGE_KEY]);
+      const value =
+        typeof stored[storageKey] === "string" ? stored[storageKey] : stored[STORAGE_KEY];
+      yamlInput.value = typeof value === "string" ? value : DEFAULT_YAML;
     } catch (error) {
       console.error("[Webpage Annotator] Failed to restore YAML:", error);
       yamlInput.value = DEFAULT_YAML;
+    } finally {
+      currentStorageKey = storageKey;
     }
   };
 
@@ -252,6 +260,15 @@
       return fallbackTabs[0];
     }
     return null;
+  };
+
+  // サイドパネルは開いたままタブを切り替えられるため、表示中のURLが変わったら設定を読み直す
+  const handleActiveTabChange = async () => {
+    const tab = await getActiveTab().catch(() => null);
+    if (storageKeyForUrl(tab && tab.url) === currentStorageKey) {
+      return;
+    }
+    await restoreYaml();
   };
 
   const sendMessageToTab = async (tabId, message) => {
@@ -291,7 +308,7 @@
   const handleApply = async () => {
     clearMessages();
     const yamlText = yamlInput.value;
-    await saveYamlImmediate(yamlText);
+    await saveYamlImmediate(currentStorageKey, yamlText);
 
     let parsedResult;
     try {
@@ -374,6 +391,17 @@
 
   applyBtn.addEventListener("click", handleApply);
   clearBtn.addEventListener("click", handleClear);
+
+  if (chrome.tabs.onActivated) {
+    chrome.tabs.onActivated.addListener(handleActiveTabChange);
+  }
+  if (chrome.tabs.onUpdated) {
+    chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+      if (changeInfo.url) {
+        handleActiveTabChange();
+      }
+    });
+  }
 
   if (typeof window !== "undefined") {
     window.__webpageAnnotatorSidepanel = {

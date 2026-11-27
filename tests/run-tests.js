@@ -184,7 +184,12 @@ const loadJsYaml = () => {
   return jsyaml;
 };
 
-const createSidepanelEnv = (jsyaml, sentMessages = [], tabResponse = { ok: true, count: 2, warnings: [] }) => {
+const createSidepanelEnv = (
+  jsyaml,
+  sentMessages = [],
+  tabResponse = { ok: true, count: 2, warnings: [] },
+  options = {}
+) => {
   const elements = {
     "yaml-input": new MockElement("textarea", { id: "yaml-input", connected: true }),
     "apply-btn": new MockElement("button", { id: "apply-btn", connected: true }),
@@ -195,7 +200,10 @@ const createSidepanelEnv = (jsyaml, sentMessages = [], tabResponse = { ok: true,
 
   const mockWindow = {
     jsyaml,
-    setTimeout: () => 1,
+    setTimeout: (callback) => {
+      callback();
+      return 1;
+    },
     clearTimeout: () => {},
   };
 
@@ -209,15 +217,30 @@ const createSidepanelEnv = (jsyaml, sentMessages = [], tabResponse = { ok: true,
     supports: (_prop, value) => /^#[0-9a-fA-F]{3,6}$/.test(value) || value === "red" || value === "blue",
   };
 
+  const storageData = { ...(options.storageData || {}) };
+  const storageSets = options.storageSets || [];
+  const tabUrl = options.tabUrl || "https://example.com/";
+
   const mockChrome = {
     storage: {
       local: {
-        get: async () => ({}),
-        set: async () => {},
+        get: async (keys) => {
+          const result = {};
+          for (const key of keys) {
+            if (Object.prototype.hasOwnProperty.call(storageData, key)) {
+              result[key] = storageData[key];
+            }
+          }
+          return result;
+        },
+        set: async (items) => {
+          Object.assign(storageData, items);
+          storageSets.push(items);
+        },
       },
     },
     tabs: {
-      query: async () => [{ id: 101 }],
+      query: async () => [{ id: 101, url: tabUrl }],
       sendMessage: async (tabId, message) => {
         sentMessages.push({ tabId, message });
         return typeof tabResponse === "function" ? tabResponse(tabId, message) : tabResponse;
@@ -235,6 +258,8 @@ const createSidepanelEnv = (jsyaml, sentMessages = [], tabResponse = { ok: true,
   return {
     window: mockWindow,
     elements,
+    storageData,
+    storageSets,
     sidepanel: mockWindow.__webpageAnnotatorSidepanel,
   };
 };
@@ -622,6 +647,50 @@ for (const [label, yamlValue] of invalidTextCases) {
     );
   });
 }
+
+// --- sidepanel.js: URL別のYAML保存・復元 ---
+
+test("sidepanel: 開いたときアクティブタブのURL（ハッシュ除く）に対応するYAMLを復元する", () => {
+  const perUrlYaml = 'rules:\n  - selector: "h1"\n';
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/page#section",
+    storageData: {
+      "yamlConfig:https://example.com/page": perUrlYaml,
+      yamlConfig: 'rules:\n  - selector: "legacy"\n',
+    },
+  });
+  flushMicrotasks();
+  assertEqual(
+    env.elements["yaml-input"].value,
+    perUrlYaml,
+    "URL別のYAMLが復元されるべき"
+  );
+});
+
+test("sidepanel: 入力したYAMLはURLごとのキーに保存され、URL別設定が無いときのみ旧グローバル設定を復元する", () => {
+  const legacyYaml = 'rules:\n  - selector: "legacy"\n';
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/other",
+    storageData: { yamlConfig: legacyYaml },
+  });
+  flushMicrotasks();
+  assertEqual(
+    env.elements["yaml-input"].value,
+    legacyYaml,
+    "URL別設定が無い場合は旧グローバル設定が復元されるべき"
+  );
+
+  const typed = 'rules:\n  - selector: "p"\n';
+  env.elements["yaml-input"].value = typed;
+  env.elements["yaml-input"].dispatchEvent("input");
+  flushMicrotasks();
+
+  assertDeepEqual(
+    env.storageSets,
+    [{ "yamlConfig:https://example.com/other": typed }],
+    "URLごとのキーに保存されるべき"
+  );
+});
 
 // --- content.js: applyAnnotations ---
 
