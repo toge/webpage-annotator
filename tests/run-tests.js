@@ -198,13 +198,27 @@ const createSidepanelEnv = (
     "error-message": new MockElement("div", { id: "error-message", connected: true }),
   };
 
+  const timers = new Map();
+  let nextTimerId = 1;
+
   const mockWindow = {
     jsyaml,
     setTimeout: (callback) => {
-      callback();
-      return 1;
+      const id = nextTimerId++;
+      timers.set(id, callback);
+      return id;
     },
-    clearTimeout: () => {},
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
+  };
+
+  const runTimers = () => {
+    const callbacks = [...timers.values()];
+    timers.clear();
+    for (const callback of callbacks) {
+      callback();
+    }
   };
 
   const mockDocument = {
@@ -219,12 +233,32 @@ const createSidepanelEnv = (
 
   const storageData = { ...(options.storageData || {}) };
   const storageSets = options.storageSets || [];
-  const tabUrl = options.tabUrl || "https://example.com/";
+  const storageGetGate = options.storageGetGate;
+  let activeTabUrl = options.tabUrl || "https://example.com/";
+
+  const createChromeEvent = () => {
+    const listeners = [];
+    return {
+      addListener: (listener) => listeners.push(listener),
+      fire: (...args) => {
+        for (const listener of listeners) {
+          listener(...args);
+        }
+      },
+    };
+  };
+  const tabEvents = {
+    onActivated: createChromeEvent(),
+    onUpdated: createChromeEvent(),
+  };
 
   const mockChrome = {
     storage: {
       local: {
         get: async (keys) => {
+          if (storageGetGate) {
+            await storageGetGate(keys);
+          }
           const result = {};
           for (const key of keys) {
             if (Object.prototype.hasOwnProperty.call(storageData, key)) {
@@ -234,17 +268,22 @@ const createSidepanelEnv = (
           return result;
         },
         set: async (items) => {
+          if (options.storageSetError) {
+            throw new Error(options.storageSetError);
+          }
           Object.assign(storageData, items);
           storageSets.push(items);
         },
       },
     },
     tabs: {
-      query: async () => [{ id: 101, url: tabUrl }],
+      query: async () => [{ id: 101, url: activeTabUrl }],
       sendMessage: async (tabId, message) => {
         sentMessages.push({ tabId, message });
         return typeof tabResponse === "function" ? tabResponse(tabId, message) : tabResponse;
       },
+      onActivated: tabEvents.onActivated,
+      onUpdated: tabEvents.onUpdated,
     },
     scripting: {
       executeScript: async () => [],
@@ -260,6 +299,11 @@ const createSidepanelEnv = (
     elements,
     storageData,
     storageSets,
+    tabEvents,
+    setTabUrl: (url) => {
+      activeTabUrl = url;
+    },
+    runTimers,
     sidepanel: mockWindow.__webpageAnnotatorSidepanel,
   };
 };
@@ -650,10 +694,10 @@ for (const [label, yamlValue] of invalidTextCases) {
 
 // --- sidepanel.js: URL別のYAML保存・復元 ---
 
-test("sidepanel: 開いたときアクティブタブのURL（ハッシュ除く）に対応するYAMLを復元する", () => {
+test("sidepanel: 開いたときアクティブタブのURL（クエリ・ハッシュ除く）に対応するYAMLを復元する", () => {
   const perUrlYaml = 'rules:\n  - selector: "h1"\n';
   const env = createSidepanelEnv(jsyaml, [], undefined, {
-    tabUrl: "https://example.com/page#section",
+    tabUrl: "https://example.com/page?q=1#section",
     storageData: {
       "yamlConfig:https://example.com/page": perUrlYaml,
       yamlConfig: 'rules:\n  - selector: "legacy"\n',
@@ -664,6 +708,142 @@ test("sidepanel: 開いたときアクティブタブのURL（ハッシュ除く
     env.elements["yaml-input"].value,
     perUrlYaml,
     "URL別のYAMLが復元されるべき"
+  );
+});
+
+test("sidepanel: タブ切替で切替先URLのYAMLを復元する", () => {
+  const aYaml = 'rules:\n  - selector: "h1"\n';
+  const bYaml = 'rules:\n  - selector: "p"\n';
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/a",
+    storageData: {
+      "yamlConfig:https://example.com/a": aYaml,
+      "yamlConfig:https://example.com/b": bYaml,
+    },
+  });
+  flushMicrotasks();
+  assertEqual(env.elements["yaml-input"].value, aYaml, "切替前URLのYAMLが復元されるべき");
+
+  env.setTabUrl("https://example.com/b");
+  env.tabEvents.onActivated.fire({ tabId: 101, windowId: 1 });
+  flushMicrotasks();
+  assertEqual(env.elements["yaml-input"].value, bYaml, "切替先URLのYAMLが復元されるべき");
+});
+
+test("sidepanel: ハッシュのみのURL変更では表示中のYAMLを読み直さない", () => {
+  const aYaml = 'rules:\n  - selector: "h1"\n';
+  const changedYaml = 'rules:\n  - selector: "p"\n';
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/a",
+    storageData: { "yamlConfig:https://example.com/a": aYaml },
+  });
+  flushMicrotasks();
+
+  env.storageData["yamlConfig:https://example.com/a"] = changedYaml;
+  env.setTabUrl("https://example.com/a#section");
+  env.tabEvents.onUpdated.fire(101, { url: "https://example.com/a#section" }, {});
+  flushMicrotasks();
+  assertEqual(
+    env.elements["yaml-input"].value,
+    aYaml,
+    "保存キーが同じなら読み直さないべき"
+  );
+});
+
+test("sidepanel: タブ切替時に切替前のタブの保留中入力を保存する", () => {
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/a",
+  });
+  flushMicrotasks();
+
+  const typed = 'rules:\n  - selector: "h1"\n';
+  env.elements["yaml-input"].value = typed;
+  env.elements["yaml-input"].dispatchEvent("input");
+  assertEqual(env.storageSets.length, 0, "200ms 経過までは保存されないべき");
+
+  env.setTabUrl("https://example.com/b");
+  env.tabEvents.onActivated.fire({ tabId: 101, windowId: 1 });
+  flushMicrotasks();
+  assertDeepEqual(
+    env.storageSets,
+    [{ "yamlConfig:https://example.com/a": typed }],
+    "切替前のタブのキーへ保留分が保存されるべき"
+  );
+});
+
+test("sidepanel: 遅れて完了した復元が新しいURLの表示を上書きしない", () => {
+  const aYaml = 'rules:\n  - selector: "h1"\n';
+  const bYaml = 'rules:\n  - selector: "p"\n';
+  let releaseB = () => {};
+  let gateB = false;
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/a",
+    storageData: {
+      "yamlConfig:https://example.com/a": aYaml,
+      "yamlConfig:https://example.com/b": bYaml,
+    },
+    storageGetGate: async (keys) => {
+      if (gateB && keys[0] === "yamlConfig:https://example.com/b") {
+        await new Promise((resolve) => {
+          releaseB = resolve;
+        });
+      }
+    },
+  });
+  flushMicrotasks();
+  assertEqual(env.elements["yaml-input"].value, aYaml, "初期表示はAのYAMLであるべき");
+
+  // B の復元を保留したまま A に戻る
+  gateB = true;
+  env.setTabUrl("https://example.com/b");
+  env.tabEvents.onActivated.fire({ tabId: 101, windowId: 1 });
+  flushMicrotasks();
+  env.setTabUrl("https://example.com/a");
+  env.tabEvents.onActivated.fire({ tabId: 101, windowId: 1 });
+  flushMicrotasks();
+
+  releaseB();
+  flushMicrotasks();
+  assertEqual(
+    env.elements["yaml-input"].value,
+    aYaml,
+    "遅れて完了したBの復元で表示を上書きしないべき"
+  );
+
+  const typed = 'rules:\n  - selector: "h1"\n';
+  env.elements["yaml-input"].value = typed;
+  env.elements["yaml-input"].dispatchEvent("input");
+  env.runTimers();
+  flushMicrotasks();
+  assertDeepEqual(
+    env.storageSets,
+    [{ "yamlConfig:https://example.com/a": typed }],
+    "現在のURL（A）のキーに保存されるべき"
+  );
+});
+
+test("sidepanel: 保存に失敗したらエラーメッセージを表示する", () => {
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabUrl: "https://example.com/a",
+    storageSetError: "QUOTA_BYTES quota exceeded",
+  });
+  flushMicrotasks();
+
+  env.elements["yaml-input"].value = 'rules:\n  - selector: "h1"\n';
+  env.elements["yaml-input"].dispatchEvent("input");
+  env.runTimers();
+  flushMicrotasks();
+
+  const errorBox = env.elements["error-message"];
+  assertEqual(
+    errorBox.className.includes("visible"),
+    true,
+    "保存失敗時はエラーメッセージが表示されるべき"
+  );
+  assertEqual(
+    errorBox.textContent.includes("保存できませんでした"),
+    true,
+    "保存失敗の内容が表示されるべき"
   );
 });
 
@@ -683,6 +863,7 @@ test("sidepanel: 入力したYAMLはURLごとのキーに保存され、URL別�
   const typed = 'rules:\n  - selector: "p"\n';
   env.elements["yaml-input"].value = typed;
   env.elements["yaml-input"].dispatchEvent("input");
+  env.runTimers();
   flushMicrotasks();
 
   assertDeepEqual(

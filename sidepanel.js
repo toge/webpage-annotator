@@ -2,7 +2,7 @@
 
 (() => {
   const STORAGE_KEY = "yamlConfig";
-  const storageKeyForUrl = (url) => (url ? `${STORAGE_KEY}:${url.split("#")[0]}` : STORAGE_KEY);
+  const storageKeyForUrl = (url) => (url ? `${STORAGE_KEY}:${url.split(/[?#]/)[0]}` : STORAGE_KEY);
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
   const DEFAULT_START_NUMBER = 1;
@@ -31,7 +31,9 @@
   const errorBox = document.getElementById("error-message");
 
   let saveTimerId = null;
+  let pendingSave = null;
   let currentStorageKey = STORAGE_KEY;
+  let restoreSeq = 0;
 
   const setBoxMessage = (box, text, type) => {
     if (!text) {
@@ -217,7 +219,21 @@
       await chrome.storage.local.set({ [storageKey]: value });
     } catch (error) {
       console.error("[Webpage Annotator] Failed to save YAML:", error);
+      showError("YAML設定を保存できませんでした。ストレージの空き容量や拡張機能の状態を確認してください。");
     }
+  };
+
+  const flushPendingSave = () => {
+    if (!pendingSave) {
+      return;
+    }
+    const { storageKey, value } = pendingSave;
+    pendingSave = null;
+    if (saveTimerId !== null) {
+      window.clearTimeout(saveTimerId);
+      saveTimerId = null;
+    }
+    saveYamlImmediate(storageKey, value);
   };
 
   const scheduleSaveYaml = (value) => {
@@ -226,27 +242,39 @@
     }
     // 保存先は入力時点のURLに固定する（タブ切替中に別URLへ混入させない）
     const storageKey = currentStorageKey;
+    pendingSave = { storageKey, value };
     saveTimerId = window.setTimeout(() => {
       saveTimerId = null;
+      pendingSave = null;
       saveYamlImmediate(storageKey, value);
     }, 200);
   };
 
-  const restoreYaml = async () => {
+  const restoreYaml = async (tab) => {
+    const seq = ++restoreSeq;
+    // 読み直しで未保存の入力を失わないよう、先に保留分を保存する
+    flushPendingSave();
     let storageKey = STORAGE_KEY;
     try {
-      const tab = await getActiveTab();
-      storageKey = storageKeyForUrl(tab && tab.url);
+      const activeTab = tab || (await getActiveTab());
+      storageKey = storageKeyForUrl(activeTab && activeTab.url);
       // 旧バージョンのグローバル設定は、URL別の設定がない場合のみ引き継ぐ
       const stored = await chrome.storage.local.get([storageKey, STORAGE_KEY]);
+      if (seq !== restoreSeq) {
+        return;
+      }
       const value =
         typeof stored[storageKey] === "string" ? stored[storageKey] : stored[STORAGE_KEY];
       yamlInput.value = typeof value === "string" ? value : DEFAULT_YAML;
     } catch (error) {
-      console.error("[Webpage Annotator] Failed to restore YAML:", error);
-      yamlInput.value = DEFAULT_YAML;
+      if (seq === restoreSeq) {
+        console.error("[Webpage Annotator] Failed to restore YAML:", error);
+        yamlInput.value = DEFAULT_YAML;
+      }
     } finally {
-      currentStorageKey = storageKey;
+      if (seq === restoreSeq) {
+        currentStorageKey = storageKey;
+      }
     }
   };
 
@@ -266,9 +294,11 @@
   const handleActiveTabChange = async () => {
     const tab = await getActiveTab().catch(() => null);
     if (storageKeyForUrl(tab && tab.url) === currentStorageKey) {
+      // 表示はそのままでよいが、別URL向けに進行中の復元があれば無効化する
+      restoreSeq += 1;
       return;
     }
-    await restoreYaml();
+    await restoreYaml(tab);
   };
 
   const sendMessageToTab = async (tabId, message) => {
