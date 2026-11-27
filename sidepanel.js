@@ -4,6 +4,7 @@
   const STORAGE_KEY = "yamlConfig";
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
+  const DEFAULT_START_NUMBER = 1;
   const DEFAULT_YAML = [
     "rules:",
     '  - selector: "a"',
@@ -83,6 +84,18 @@
       throw new Error("'rules' は配列で指定してください。");
     }
 
+    let startNumber = DEFAULT_START_NUMBER;
+    if (parsed.startNumber !== undefined && parsed.startNumber !== null) {
+      if (
+        typeof parsed.startNumber !== "number" ||
+        !Number.isSafeInteger(parsed.startNumber) ||
+        parsed.startNumber < 0
+      ) {
+        throw new Error("'startNumber' は 0 以上の整数で指定してください。");
+      }
+      startNumber = parsed.startNumber;
+    }
+
     const rules = [];
     const warnings = [];
     const selectorValidator = document.createDocumentFragment();
@@ -141,7 +154,7 @@
       throw new Error(`有効なルールがありません。${detail}`);
     }
 
-    return { rules, warnings };
+    return { rules, startNumber, warnings };
   };
 
   const saveYamlImmediate = async (value) => {
@@ -246,6 +259,7 @@
       const response = await sendMessageToTab(tab.id, {
         type: "APPLY_ANNOTATIONS",
         rules: parsedResult.rules,
+        startNumber: parsedResult.startNumber,
       });
 
       if (!response || !response.ok) {
@@ -311,6 +325,7 @@
       parseAndValidateYaml,
       DEFAULT_COLOR,
       DEFAULT_PADDING,
+      DEFAULT_START_NUMBER,
     };
   }
 

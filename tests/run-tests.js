@@ -1,0 +1,623 @@
+"use strict";
+
+const GLib = imports.gi.GLib;
+
+const PROJECT_ROOT = GLib.get_current_dir();
+
+const readTextFile = (relativePath) => {
+  const fullPath = GLib.build_filenamev([PROJECT_ROOT, relativePath]);
+  const [ok, bytes] = GLib.file_get_contents(fullPath);
+  if (!ok) {
+    throw new Error(`ファイルの読み込みに失敗しました: ${fullPath}`);
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+};
+
+const assertEqual = (actual, expected, message) => {
+  if (actual !== expected) {
+    throw new Error(`${message}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`);
+  }
+};
+
+const assertDeepEqual = (actual, expected, message) => {
+  const actualJson = JSON.stringify(actual);
+  const expectedJson = JSON.stringify(expected);
+  if (actualJson !== expectedJson) {
+    throw new Error(`${message}\n  expected: ${expectedJson}\n  actual:   ${actualJson}`);
+  }
+};
+
+const assertThrows = (fn, expectedSubstring, message) => {
+  let threw = false;
+  try {
+    fn();
+  } catch (error) {
+    threw = true;
+    const errorMessage = error && error.message ? error.message : String(error);
+    if (expectedSubstring && !errorMessage.includes(expectedSubstring)) {
+      throw new Error(
+        `${message}\n  expected error to include: ${JSON.stringify(expectedSubstring)}\n  actual error: ${JSON.stringify(errorMessage)}`
+      );
+    }
+  }
+  if (!threw) {
+    throw new Error(`${message}\n  expected function to throw, but it did not`);
+  }
+};
+
+class MockElement {
+  constructor(tagName, options = {}) {
+    this.tagName = String(tagName).toUpperCase();
+    this.id = options.id || "";
+    this.attributes = new Map();
+    this.style = {};
+    this.dataset = {};
+    this.children = [];
+    this.parentNode = null;
+    this.textContent = "";
+    this.value = "";
+    this.className = "";
+    this.disabled = false;
+    this._listeners = new Map();
+    this._rect = options.rect || { left: 20, top: 40, width: 100, height: 24 };
+    this._computedDisplay = options.display || "block";
+    this._isConnected = Boolean(options.connected);
+    this._selectors = new Set(options.selectors || []);
+  }
+
+  get isConnected() {
+    if (this._isConnected) {
+      return true;
+    }
+    return this.parentNode ? this.parentNode.isConnected : false;
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+    if (name === "id") {
+      this.id = String(value);
+    }
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  appendChild(child) {
+    if (child instanceof MockDocumentFragment) {
+      for (const fragChild of child.children) {
+        fragChild.parentNode = this;
+        this.children.push(fragChild);
+      }
+      child.children = [];
+      return child;
+    }
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
+
+  remove() {
+    if (this.parentNode) {
+      const idx = this.parentNode.children.indexOf(this);
+      if (idx >= 0) {
+        this.parentNode.children.splice(idx, 1);
+      }
+      this.parentNode = null;
+    }
+    this._isConnected = false;
+  }
+
+  closest(selector) {
+    if (selector === '[data-webpage-annotator-overlay="true"]') {
+      let current = this;
+      while (current) {
+        if (current.getAttribute && current.getAttribute("data-webpage-annotator-overlay") === "true") {
+          return current;
+        }
+        current = current.parentNode;
+      }
+    }
+    return null;
+  }
+
+  getBoundingClientRect() {
+    return this._rect;
+  }
+
+  addEventListener(type, listener) {
+    if (!this._listeners.has(type)) {
+      this._listeners.set(type, []);
+    }
+    this._listeners.get(type).push(listener);
+  }
+
+  dispatchEvent(type, event = {}) {
+    const handlers = this._listeners.get(type) || [];
+    for (const handler of handlers) {
+      handler(event);
+    }
+  }
+
+  querySelectorAllByAttr(attrName) {
+    const results = [];
+    const walk = (node) => {
+      for (const child of node.children) {
+        if (child.getAttribute && child.getAttribute(attrName) !== null) {
+          results.push(child);
+        }
+        walk(child);
+      }
+    };
+    walk(this);
+    return results;
+  }
+}
+
+class MockDocumentFragment {
+  constructor() {
+    this.children = [];
+  }
+
+  appendChild(child) {
+    child.parentNode = null;
+    this.children.push(child);
+    return child;
+  }
+
+  querySelector(selector) {
+    if (!selector || selector.includes("[invalid") || selector.includes(">>>")) {
+      throw new Error(`Invalid selector: ${selector}`);
+    }
+    return null;
+  }
+}
+
+const loadJsYaml = () => {
+  const source = readTextFile("lib/js-yaml.min.js");
+  const sandboxWindow = {};
+  const fn = new Function("window", "self", "globalThis", `${source}\nreturn window.jsyaml;`);
+  const jsyaml = fn(sandboxWindow, sandboxWindow, sandboxWindow);
+  if (!jsyaml || typeof jsyaml.load !== "function") {
+    throw new Error("js-yaml のロードに失敗しました");
+  }
+  return jsyaml;
+};
+
+const createSidepanelEnv = (jsyaml, sentMessages = [], tabResponse = { ok: true, count: 2, warnings: [] }) => {
+  const elements = {
+    "yaml-input": new MockElement("textarea", { id: "yaml-input", connected: true }),
+    "apply-btn": new MockElement("button", { id: "apply-btn", connected: true }),
+    "clear-btn": new MockElement("button", { id: "clear-btn", connected: true }),
+    "status-message": new MockElement("div", { id: "status-message", connected: true }),
+    "error-message": new MockElement("div", { id: "error-message", connected: true }),
+  };
+
+  const mockWindow = {
+    jsyaml,
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+  };
+
+  const mockDocument = {
+    getElementById: (id) => elements[id] || null,
+    createDocumentFragment: () => new MockDocumentFragment(),
+    createElement: (tag) => new MockElement(tag),
+  };
+
+  const mockCSS = {
+    supports: (_prop, value) => /^#[0-9a-fA-F]{3,6}$/.test(value) || value === "red" || value === "blue",
+  };
+
+  const mockChrome = {
+    storage: {
+      local: {
+        get: async () => ({}),
+        set: async () => {},
+      },
+    },
+    tabs: {
+      query: async () => [{ id: 101 }],
+      sendMessage: async (tabId, message) => {
+        sentMessages.push({ tabId, message });
+        return typeof tabResponse === "function" ? tabResponse(tabId, message) : tabResponse;
+      },
+    },
+    scripting: {
+      executeScript: async () => [],
+    },
+  };
+
+  const source = readTextFile("sidepanel.js");
+  const fn = new Function("window", "document", "CSS", "chrome", source);
+  fn(mockWindow, mockDocument, mockCSS, mockChrome);
+
+  return {
+    window: mockWindow,
+    elements,
+    sidepanel: mockWindow.__webpageAnnotatorSidepanel,
+  };
+};
+
+const createContentEnv = (pageElements = []) => {
+  const body = new MockElement("body", { connected: true });
+  for (const el of pageElements) {
+    body.appendChild(el);
+  }
+
+  let messageListener = null;
+
+  const mockWindow = {
+    getComputedStyle: (el) => ({ display: el._computedDisplay || "block" }),
+    requestAnimationFrame: (cb) => {
+      cb();
+      return 1;
+    },
+    cancelAnimationFrame: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+
+  const findById = (node, id) => {
+    if (node.id === id) {
+      return node;
+    }
+    for (const child of node.children) {
+      const found = findById(child, id);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  };
+
+  const mockDocument = {
+    body,
+    getElementById: (id) => findById(body, id),
+    createElement: (tag) => new MockElement(tag),
+    createDocumentFragment: () => new MockDocumentFragment(),
+    querySelectorAll: (selector) => {
+      if (selector.includes("[invalid")) {
+        throw new Error(`Invalid selector: ${selector}`);
+      }
+      return pageElements.filter((el) => el._selectors.has(selector));
+    },
+  };
+
+  const mockChrome = {
+    runtime: {
+      onMessage: {
+        addListener: (listener) => {
+          messageListener = listener;
+        },
+      },
+    },
+  };
+
+  const source = readTextFile("content.js");
+  const fn = new Function("window", "document", "Element", "chrome", source);
+  fn(mockWindow, mockDocument, MockElement, mockChrome);
+
+  return {
+    window: mockWindow,
+    document: mockDocument,
+    engine: mockWindow.__webpageAnnotatorEngine,
+    dispatchMessage: (message) => {
+      let response = null;
+      messageListener(message, {}, (res) => {
+        response = res;
+      });
+      return response;
+    },
+  };
+};
+
+const flushMicrotasks = () => {
+  const loop = new GLib.MainLoop(null, false);
+  GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+    loop.quit();
+    return GLib.SOURCE_REMOVE;
+  });
+  loop.run();
+};
+
+const tests = [];
+const test = (name, fn) => {
+  tests.push({ name, fn });
+};
+
+const jsyaml = loadJsYaml();
+
+// --- sidepanel.js: parseAndValidateYaml ---
+
+test("sidepanel: startNumber 未指定時はデフォルト値 1 を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('rules:\n  - selector: "a"\n');
+  assertEqual(result.startNumber, 1, "startNumber は 1 であるべき");
+  assertEqual(sidepanel.DEFAULT_START_NUMBER, 1, "DEFAULT_START_NUMBER が公開されるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: startNumber が null（値なし）のときはデフォルト値 1 を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('startNumber:\nrules:\n  - selector: "a"\n');
+  assertEqual(result.startNumber, 1, "startNumber: null は 1 になるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: startNumber: 0 を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('startNumber: 0\nrules:\n  - selector: "a"\n');
+  assertEqual(result.startNumber, 0, "startNumber は 0 であるべき");
+});
+
+test("sidepanel: startNumber: 10 を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('startNumber: 10\nrules:\n  - selector: "a"\n');
+  assertEqual(result.startNumber, 10, "startNumber は 10 であるべき");
+});
+
+test("sidepanel: startNumber に Number.MAX_SAFE_INTEGER を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml(
+    `startNumber: ${Number.MAX_SAFE_INTEGER}\nrules:\n  - selector: "a"\n`
+  );
+  assertEqual(result.startNumber, Number.MAX_SAFE_INTEGER, "MAX_SAFE_INTEGER が許容されるべき");
+});
+
+const invalidYamlCases = [
+  ["負数 (-1)", "startNumber: -1"],
+  ["小数 (1.5)", "startNumber: 1.5"],
+  ["数字文字列 (\"10\")", 'startNumber: "10"'],
+  ["空文字列 (\"\")", 'startNumber: ""'],
+  ["文字列 (\"abc\")", 'startNumber: "abc"'],
+  ["真偽値 (true)", "startNumber: true"],
+  ["真偽値 (false)", "startNumber: false"],
+  ["配列 ([1])", "startNumber: [1]"],
+  ["オブジェクト ({})", "startNumber: {}"],
+  ["NaN (.nan)", "startNumber: .nan"],
+  ["Infinity (.inf)", "startNumber: .inf"],
+  ["安全な整数範囲外 (MAX_SAFE_INTEGER + 1)", "startNumber: 9007199254740992"],
+];
+
+for (const [label, line] of invalidYamlCases) {
+  test(`sidepanel: 不正な startNumber (${label}) はエラーで中断する`, () => {
+    const { sidepanel } = createSidepanelEnv(jsyaml);
+    assertThrows(
+      () => sidepanel.parseAndValidateYaml(`${line}\nrules:\n  - selector: "a"\n`),
+      "'startNumber' は 0 以上の整数で指定してください。",
+      `不正値 (${label}) はエラーを投げるべき`
+    );
+  });
+}
+
+// --- content.js: applyAnnotations ---
+
+test("content: 第2引数省略（後方互換）で 1 から連番採番される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }]);
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 2, "count は 2 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["1", "2"],
+    "バッジテキストは 1, 2 であるべき"
+  );
+  assertDeepEqual(
+    badges.map((b) => b.getAttribute("data-webpage-annotator-badge")),
+    ["1", "2"],
+    "badge 属性は 1, 2 であるべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    ["1", "2"],
+    "box 属性は 1, 2 であるべき"
+  );
+});
+
+test("content: startNumber: 0 で 0, 1, 2 から採番される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#007AFF", padding: 2 },
+    ],
+    { startNumber: 0 }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 3, "count は描画件数 3 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["0", "1", "2"],
+    "バッジテキストは 0, 1, 2 であるべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    ["0", "1", "2"],
+    "box 属性は 0, 1, 2 であるべき"
+  );
+});
+
+test("content: startNumber: 10 かつ重複・非表示要素スキップ時でも欠番なく 10, 11 と採番される", () => {
+  const dupVisible = new MockElement("a", { id: "a1", selectors: ["a", ".special"] });
+  const hidden = new MockElement("a", { id: "a2", selectors: ["a"], display: "none" });
+  const zeroWidth = new MockElement("a", {
+    id: "a3",
+    selectors: ["a"],
+    rect: { left: 0, top: 0, width: 0, height: 20 },
+  });
+  const secondVisible = new MockElement("button", { id: "b1", selectors: [".special"] });
+
+  const { engine, document } = createContentEnv([dupVisible, hidden, zeroWidth, secondVisible]);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: ".special", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 10 }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 2, "count は 2 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["10", "11"],
+    "欠番なく 10, 11 と採番されるべき"
+  );
+});
+
+for (const [label, invalidValue] of [
+  ["負数 (-1)", -1],
+  ["小数 (1.5)", 1.5],
+  ["文字列 (\"10\")", "10"],
+  ["真偽値 (true)", true],
+  ["NaN", NaN],
+  ["Infinity", Infinity],
+  ["MAX_SAFE_INTEGER + 1", Number.MAX_SAFE_INTEGER + 1],
+]) {
+  test(`content: 不正な startNumber (${label}) はエラーを返しオーバーレイを生成しない`, () => {
+    const elements = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+    const { engine, document } = createContentEnv(elements);
+    const res = engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }], {
+      startNumber: invalidValue,
+    });
+
+    assertEqual(res.ok, false, "ok は false であるべき");
+    assertEqual(
+      res.error,
+      "'startNumber' は 0 以上の整数で指定してください。",
+      "期待するエラーメッセージが返るべき"
+    );
+    assertEqual(
+      document.getElementById("__webpage-annotator-overlay-root"),
+      null,
+      "オーバーレイコンテナは生成されないべき"
+    );
+  });
+}
+
+test("content: 不正な options（配列やプリミティブ）はエラーを返す", () => {
+  const elements = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+  const { engine } = createContentEnv(elements);
+  const res1 = engine.applyAnnotations([{ selector: "a" }], []);
+  const res2 = engine.applyAnnotations([{ selector: "a" }], 10);
+  assertEqual(res1.ok, false, "配列 options はエラーであるべき");
+  assertEqual(res2.ok, false, "数値 options はエラーであるべき");
+});
+
+test("content: startNumber が MAX_SAFE_INTEGER のとき1件なら成功し2件以上ならエラーを返す", () => {
+  const oneEl = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+  const env1 = createContentEnv(oneEl);
+  const res1 = env1.engine.applyAnnotations([{ selector: "a" }], {
+    startNumber: Number.MAX_SAFE_INTEGER,
+  });
+  assertEqual(res1.ok, true, "1件なら成功するべき");
+  const container1 = env1.document.getElementById("__webpage-annotator-overlay-root");
+  assertDeepEqual(
+    container1.querySelectorAllByAttr("data-webpage-annotator-badge").map((b) => b.textContent),
+    [String(Number.MAX_SAFE_INTEGER)],
+    "MAX_SAFE_INTEGER がバッジに表示されるべき"
+  );
+
+  const twoEls = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+  ];
+  const env2 = createContentEnv(twoEls);
+  const res2 = env2.engine.applyAnnotations([{ selector: "a" }], {
+    startNumber: Number.MAX_SAFE_INTEGER,
+  });
+  assertEqual(res2.ok, false, "2件以上で安全な整数上限を超えたらエラーを返すべき");
+  assertEqual(
+    res2.error,
+    "連番が安全な整数の上限を超えました。",
+    "上限超過エラーメッセージが返るべき"
+  );
+  assertEqual(
+    env2.document.getElementById("__webpage-annotator-overlay-root"),
+    null,
+    "オーバーレイは生成されないべき"
+  );
+});
+
+// --- 結合テスト: sidepanel.js -> content.js ---
+
+test("integration: sidepanel の描画適用から content の onMessage 経由で startNumber が反映される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+  ];
+  const contentEnv = createContentEnv(elements);
+  const sentMessages = [];
+  const sidepanelEnv = createSidepanelEnv(jsyaml, sentMessages, (_tabId, message) =>
+    contentEnv.dispatchMessage(message)
+  );
+
+  sidepanelEnv.elements["yaml-input"].value = [
+    "startNumber: 5",
+    "rules:",
+    '  - selector: "a"',
+    '    color: "#FF3B30"',
+  ].join("\n");
+
+  sidepanelEnv.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+
+  assertEqual(sentMessages.length, 1, "メッセージが1回送信されるべき");
+  assertEqual(sentMessages[0].message.type, "APPLY_ANNOTATIONS", "APPLY_ANNOTATIONS が送信されるべき");
+  assertEqual(sentMessages[0].message.startNumber, 5, "startNumber: 5 が送信されるべき");
+
+  const container = contentEnv.document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["5", "6"],
+    "content.js で 5, 6 が描画されるべき"
+  );
+  assertEqual(
+    sidepanelEnv.elements["status-message"].textContent,
+    "2 件の要素にオーバーレイを描画しました。",
+    "ステータスメッセージが正しく表示されるべき"
+  );
+});
+
+let passed = 0;
+let failed = 0;
+
+for (const { name, fn } of tests) {
+  try {
+    fn();
+    print(`PASS: ${name}`);
+    passed += 1;
+  } catch (error) {
+    printerr(`FAIL: ${name}\n  ${error && error.message ? error.message : String(error)}`);
+    failed += 1;
+  }
+}
+
+print(`\nSummary: ${passed} passed, ${failed} failed (total ${tests.length})`);
+if (failed > 0) {
+  imports.system.exit(1);
+}

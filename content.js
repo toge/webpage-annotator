@@ -10,6 +10,7 @@
   const CONTAINER_ATTR = "data-webpage-annotator-overlay";
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
+  const DEFAULT_START_NUMBER = 1;
   const BADGE_HEIGHT = 18;
   const BORDER_WIDTH = 2;
   const MAX_Z_INDEX = 2147483647;
@@ -203,7 +204,7 @@
     return { boxEl, badgeEl };
   };
 
-  const applyAnnotations = (rules) => {
+  const applyAnnotations = (rules, options = {}) => {
     clearAnnotations();
 
     if (!document.body) {
@@ -214,13 +215,35 @@
       return { ok: false, error: "ルール配列が不正です。" };
     }
 
+    if (
+      options !== undefined &&
+      options !== null &&
+      (typeof options !== "object" || Array.isArray(options))
+    ) {
+      return { ok: false, error: "オプションが不正です。" };
+    }
+
+    const rawStartNumber = options ? options.startNumber : undefined;
+    let startNumber = DEFAULT_START_NUMBER;
+    if (rawStartNumber !== undefined && rawStartNumber !== null) {
+      if (
+        typeof rawStartNumber !== "number" ||
+        !Number.isSafeInteger(rawStartNumber) ||
+        rawStartNumber < 0
+      ) {
+        return { ok: false, error: "'startNumber' は 0 以上の整数で指定してください。" };
+      }
+      startNumber = rawStartNumber;
+    }
+
     const seenElements = new Set();
     const warnings = [];
     const matchedEntries = [];
 
-    rules.forEach((rawRule, ruleIndex) => {
+    for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex += 1) {
+      const rawRule = rules[ruleIndex];
       if (!rawRule || typeof rawRule.selector !== "string" || !rawRule.selector.trim()) {
-        return;
+        continue;
       }
 
       const selector = rawRule.selector.trim();
@@ -238,7 +261,7 @@
         warnings.push(
           `ルール #${ruleIndex + 1}: 不正なCSSセレクタ "${selector}" をスキップしました (${error.message})。`
         );
-        return;
+        continue;
       }
 
       for (const element of elements) {
@@ -248,15 +271,19 @@
         if (!isElementVisible(element)) {
           continue;
         }
+        const nextIndex = startNumber + matchedEntries.length;
+        if (!Number.isSafeInteger(nextIndex)) {
+          return { ok: false, error: "連番が安全な整数の上限を超えました。" };
+        }
         seenElements.add(element);
         matchedEntries.push({
           element,
           color,
           padding,
-          index: matchedEntries.length + 1,
+          index: nextIndex,
         });
       }
-    });
+    }
 
     if (matchedEntries.length === 0) {
       return { ok: true, count: 0, warnings };
@@ -294,7 +321,9 @@
 
       if (message.type === "APPLY_ANNOTATIONS") {
         try {
-          const result = applyAnnotations(message.rules);
+          const result = applyAnnotations(message.rules, {
+            startNumber: message.startNumber,
+          });
           sendResponse(result);
         } catch (error) {
           sendResponse({
