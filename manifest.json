@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Webpage Annotator",
+  "version": "1.0.0",
+  "description": "YAML形式で指定したCSSセレクタに一致するDOM要素へ、枠線と連番バッジをオーバーレイ描画します。",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Webpage Annotator を開く"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

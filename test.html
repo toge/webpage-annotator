@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webpage Annotator 動作確認ページ</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1f2328;
+      background: #f8fafc;
+    }
+
+    .top-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: #0f172a;
+      color: #ffffff;
+    }
+
+    .top-bar a {
+      color: #38bdf8;
+      text-decoration: none;
+      padding: 6px 8px;
+      display: inline-block;
+    }
+
+    main {
+      max-width: 960px;
+      margin: 32px auto;
+      padding: 0 20px 80px;
+      display: grid;
+      gap: 24px;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 20px;
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 16px;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .responsive-box {
+      display: flex;
+      justify-content: flex-end;
+      width: 100%;
+    }
+
+    button,
+    input[type="submit"] {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      cursor: pointer;
+    }
+
+    .primary-action {
+      background: #007aff;
+      color: #ffffff;
+      border-color: #007aff;
+    }
+
+    .hidden-display {
+      display: none;
+    }
+
+    .zero-width {
+      display: inline-block;
+      width: 0;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
+    }
+
+    .zero-height {
+      display: inline-block;
+      width: 80px;
+      height: 0;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <!-- 画面上端（バッジが内側左上に切り替わるケースの検証用） -->
+  <nav class="top-bar">
+    <a id="top-edge-link" href="#top">画面上端リンク</a>
+    <a id="top-edge-link-2" href="#section-1">セクション1へ</a>
+  </nav>
+
+  <main>
+    <section id="section-1" class="card">
+      <h2>リンク・ボタン・重複マッチの検証</h2>
+      <div class="row">
+        <a id="normal-link" href="#demo">通常リンク</a>
+        <a id="duplicate-hit-link" class="special-target" href="#dup">複数ルール重複リンク</a>
+        <button id="normal-button" type="button">通常ボタン</button>
+        <input id="submit-input" type="submit" value="送信ボタン">
+        <button id="primary-button" class="primary-action" type="button">プライマリボタン</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>非表示要素（スキップ対象）の検証</h2>
+      <div class="row">
+        <a id="hidden-link" class="hidden-display" href="#hidden">display:none のリンク</a>
+        <div class="hidden-display">
+          <button id="hidden-ancestor-button" type="button">親が display:none のボタン</button>
+        </div>
+        <a id="zero-width-link" class="zero-width" href="#zero-w">幅0</a>
+        <button id="zero-height-button" class="zero-height" type="button">高さ0</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>リサイズ追従の検証（右寄せ要素）</h2>
+      <div class="responsive-box">
+        <button id="resize-target-btn" type="button">リサイズ追従ボタン</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

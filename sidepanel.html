@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webpage Annotator</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --surface: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #656d76;
+      --primary: #007aff;
+      --primary-hover: #0062cc;
+      --secondary-bg: #eef1f5;
+      --secondary-hover: #e1e6ec;
+      --error-bg: #fff2f0;
+      --error-border: #ffccc7;
+      --error-text: #cf1322;
+      --warn-bg: #fffbe6;
+      --warn-border: #ffe58f;
+      --warn-text: #ad6800;
+      --success-bg: #f6ffed;
+      --success-border: #b7eb8f;
+      --success-text: #237804;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161b22;
+        --surface: #0d1117;
+        --border: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --primary: #2f81f7;
+        --primary-hover: #1f6feb;
+        --secondary-bg: #21262d;
+        --secondary-hover: #30363d;
+        --error-bg: rgba(248, 81, 73, 0.14);
+        --error-border: rgba(248, 81, 73, 0.45);
+        --error-text: #ff7b72;
+        --warn-bg: rgba(210, 153, 34, 0.16);
+        --warn-border: rgba(210, 153, 34, 0.45);
+        --warn-text: #e3b341;
+        --success-bg: rgba(46, 160, 67, 0.16);
+        --success-border: rgba(46, 160, 67, 0.45);
+        --success-text: #56d364;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 14px;
+      gap: 10px;
+    }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .editor-section {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 180px;
+      gap: 6px;
+    }
+
+    .editor-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    .shortcut-hint {
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    #yaml-input {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: 160px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      resize: vertical;
+      tab-size: 2;
+    }
+
+    #yaml-input:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: -1px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s ease, opacity 0.15s ease;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #apply-btn {
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    #apply-btn:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    #clear-btn {
+      background: var(--secondary-bg);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    #clear-btn:hover:not(:disabled) {
+      background: var(--secondary-hover);
+    }
+
+    .message-box {
+      display: none;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message-box.visible {
+      display: block;
+    }
+
+    .message-box.error {
+      background: var(--error-bg);
+      border-color: var(--error-border);
+      color: var(--error-text);
+    }
+
+    .message-box.warning {
+      background: var(--warn-bg);
+      border-color: var(--warn-border);
+      color: var(--warn-text);
+    }
+
+    .message-box.success {
+      background: var(--success-bg);
+      border-color: var(--success-border);
+      color: var(--success-text);
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Webpage Annotator</h1>
+      <p class="subtitle">YAMLで指定したCSSセレクタに枠線と連番バッジを描画します</p>
+    </header>
+
+    <section class="editor-section">
+      <label class="editor-label" for="yaml-input">
+        <span>YAML設定</span>
+        <span class="shortcut-hint">Ctrl+Enter で適用</span>
+      </label>
+      <textarea id="yaml-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    </section>
+
+    <div class="actions">
+      <button id="apply-btn" type="button">描画適用</button>
+      <button id="clear-btn" type="button">クリア</button>
+    </div>
+
+    <div id="status-message" class="message-box" role="status" aria-live="polite"></div>
+    <div id="error-message" class="message-box" role="alert" aria-live="assertive"></div>
+  </main>
+
+  <script src="lib/js-yaml.min.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
