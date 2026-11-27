@@ -560,6 +560,69 @@ for (const [label, line] of invalidRoundedYamlCases) {
   });
 }
 
+test("sidepanel: text 未指定・null・空文字 '' はいずれも null に正規化される", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  assertEqual(sidepanel.DEFAULT_TEXT, null, "DEFAULT_TEXT は null が公開されるべき");
+
+  const result = sidepanel.parseAndValidateYaml(
+    [
+      "rules:",
+      '  - selector: "a"',
+      '  - selector: "button"',
+      "    text:",
+      '  - selector: "input"',
+      '    text: ""',
+    ].join("\n")
+  );
+  assertEqual(result.rules[0].text, null, "未指定の text は null であるべき");
+  assertEqual(result.rules[1].text, null, "null の text は null であるべき");
+  assertEqual(result.rules[2].text, null, "空文字の text は null であるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: text の 1 文字以上の文字列は前後空白・空白のみ・日本語・記号を含めそのまま保持される", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml(
+    [
+      "rules:",
+      '  - selector: "a"',
+      '    text: " NOTE "',
+      '  - selector: "button"',
+      '    text: "重要!"',
+      '  - selector: "input"',
+      '    text: " "',
+    ].join("\n")
+  );
+  assertEqual(result.rules[0].text, " NOTE ", "text の前後空白が保持されるべき");
+  assertEqual(result.rules[1].text, "重要!", "日本語と記号の text が保持されるべき");
+  assertEqual(result.rules[2].text, " ", "空白のみの text もトリムされず保持されるべき");
+});
+
+const invalidTextCases = [
+  ["数値 (123)", "123"],
+  ["真偽値 (true)", "true"],
+  ["真偽値 (false)", "false"],
+  ["配列 ([\"a\"])", '["a"]'],
+  ["オブジェクト ({})", "{}"],
+];
+
+for (const [label, yamlValue] of invalidTextCases) {
+  test(`sidepanel: 不正な text (${label}) はルール番号付きエラーで中断する`, () => {
+    const { sidepanel } = createSidepanelEnv(jsyaml);
+    const yamlText = [
+      "rules:",
+      '  - selector: "a"',
+      '  - selector: "button"',
+      `    text: ${yamlValue}`,
+    ].join("\n");
+    assertThrows(
+      () => sidepanel.parseAndValidateYaml(yamlText),
+      "ルール #2: 'text' は文字列で指定してください。",
+      `不正な text (${label}) はエラーを投げるべき`
+    );
+  });
+}
+
 // --- content.js: applyAnnotations ---
 
 test("content: 第2引数省略（後方互換）で 1 から連番採番される", () => {

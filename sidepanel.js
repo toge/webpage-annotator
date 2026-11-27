@@ -7,6 +7,7 @@
   const DEFAULT_START_NUMBER = 1;
   const DEFAULT_PREFIX = "";
   const DEFAULT_SUFFIX = "";
+  const DEFAULT_TEXT = null;
   const NUMBERING_MODE_GLOBAL = "global";
   const NUMBERING_MODE_PER_RULE = "perRule";
   const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
@@ -188,7 +189,17 @@
         suffix = rawRule.suffix;
       }
 
-      rules.push({ selector, color, padding, prefix, suffix });
+      let text = DEFAULT_TEXT;
+      if (rawRule.text !== undefined && rawRule.text !== null) {
+        if (typeof rawRule.text !== "string") {
+          throw new Error(`ルール #${ruleNo}: 'text' は文字列で指定してください。`);
+        }
+        if (rawRule.text !== "") {
+          text = rawRule.text;
+        }
+      }
+
+      rules.push({ selector, color, padding, prefix, suffix, text });
     });
 
     if (rules.length === 0) {
@@ -374,6 +385,7 @@
       DEFAULT_ROUNDED,
       DEFAULT_PREFIX,
       DEFAULT_SUFFIX,
+      DEFAULT_TEXT,
     };
   }
 
