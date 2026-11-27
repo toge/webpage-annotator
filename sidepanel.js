@@ -11,6 +11,7 @@
   const NUMBERING_MODE_PER_RULE = "perRule";
   const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
   const VALID_NUMBERING_MODES = new Set([NUMBERING_MODE_GLOBAL, NUMBERING_MODE_PER_RULE]);
+  const DEFAULT_ROUNDED = false;
   const DEFAULT_YAML = [
     "rules:",
     '  - selector: "a"',
@@ -113,6 +114,14 @@
       numberingMode = parsed.numberingMode;
     }
 
+    let rounded = DEFAULT_ROUNDED;
+    if (parsed.rounded !== undefined && parsed.rounded !== null) {
+      if (typeof parsed.rounded !== "boolean") {
+        throw new Error("'rounded' は真偽値（true または false）で指定してください。");
+      }
+      rounded = parsed.rounded;
+    }
+
     const rules = [];
     const warnings = [];
     const selectorValidator = document.createDocumentFragment();
@@ -187,7 +196,7 @@
       throw new Error(`有効なルールがありません。${detail}`);
     }
 
-    return { rules, startNumber, numberingMode, warnings };
+    return { rules, startNumber, numberingMode, rounded, warnings };
   };
 
   const saveYamlImmediate = async (value) => {
@@ -294,6 +303,7 @@
         rules: parsedResult.rules,
         startNumber: parsedResult.startNumber,
         numberingMode: parsedResult.numberingMode,
+        rounded: parsedResult.rounded,
       });
 
       if (!response || !response.ok) {
@@ -361,6 +371,7 @@
       DEFAULT_PADDING,
       DEFAULT_START_NUMBER,
       DEFAULT_NUMBERING_MODE,
+      DEFAULT_ROUNDED,
       DEFAULT_PREFIX,
       DEFAULT_SUFFIX,
     };

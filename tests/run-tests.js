@@ -510,6 +510,56 @@ for (const field of ["prefix", "suffix"]) {
   }
 }
 
+test("sidepanel: rounded 未指定時はデフォルト値 false を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('rules:\n  - selector: "a"\n');
+  assertEqual(result.rounded, false, "rounded は false であるべき");
+  assertEqual(sidepanel.DEFAULT_ROUNDED, false, "DEFAULT_ROUNDED が公開されるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: rounded が null（値なし）のときはデフォルト値 false を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('rounded:\nrules:\n  - selector: "a"\n');
+  assertEqual(result.rounded, false, "rounded: null は false になるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: rounded: true を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('rounded: true\nrules:\n  - selector: "a"\n');
+  assertEqual(result.rounded, true, "rounded は true であるべき");
+});
+
+test("sidepanel: rounded: false を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('rounded: false\nrules:\n  - selector: "a"\n');
+  assertEqual(result.rounded, false, "rounded は false であるべき");
+});
+
+const invalidRoundedYamlCases = [
+  ["文字列 (\"true\")", 'rounded: "true"'],
+  ["文字列 (\"false\")", 'rounded: "false"'],
+  ["空文字列 (\"\")", 'rounded: ""'],
+  ["文字列 (yes)", "rounded: yes"],
+  ["文字列 (no)", "rounded: no"],
+  ["数値 (1)", "rounded: 1"],
+  ["数値 (0)", "rounded: 0"],
+  ["配列 ([true])", "rounded: [true]"],
+  ["オブジェクト ({})", "rounded: {}"],
+];
+
+for (const [label, line] of invalidRoundedYamlCases) {
+  test(`sidepanel: 不正な rounded (${label}) はエラーで中断する`, () => {
+    const { sidepanel } = createSidepanelEnv(jsyaml);
+    assertThrows(
+      () => sidepanel.parseAndValidateYaml(`${line}\nrules:\n  - selector: "a"\n`),
+      "'rounded' は真偽値（true または false）で指定してください。",
+      `不正値 (${label}) はエラーを投げるべき`
+    );
+  });
+}
+
 // --- content.js: applyAnnotations ---
 
 test("content: 第2引数省略（後方互換）で 1 から連番採番される", () => {
@@ -1034,6 +1084,131 @@ for (const field of ["prefix", "suffix"]) {
   }
 }
 
+test("content: rounded 省略および false 指定時は直角枠と従来バッジ形状になる", () => {
+  for (const options of [undefined, { rounded: false }]) {
+    const outsideEl = new MockElement("a", {
+      id: "outside",
+      selectors: ["a"],
+      rect: { left: 20, top: 40, width: 100, height: 24 },
+    });
+    const insideEl = new MockElement("a", {
+      id: "inside",
+      selectors: ["a"],
+      rect: { left: 20, top: 5, width: 100, height: 24 },
+    });
+    const { engine, document } = createContentEnv([outsideEl, insideEl]);
+    const res =
+      options === undefined
+        ? engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }])
+        : engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }], options);
+
+    assertEqual(res.ok, true, "ok は true であるべき");
+    const container = document.getElementById("__webpage-annotator-overlay-root");
+    const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+    const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+
+    assertEqual(badges[0].dataset.placement, "outside", "1件目は outside であるべき");
+    assertEqual(boxes[0].style.borderRadius, "0px", "外側配置かつ直角時の枠は 0px であるべき");
+    assertEqual(badges[0].style.borderRadius, "3px 3px 0 0", "外側配置時のバッジは 3px 3px 0 0 であるべき");
+
+    assertEqual(badges[1].dataset.placement, "inside", "2件目は inside であるべき");
+    assertEqual(boxes[1].style.borderRadius, "0px", "内側配置かつ直角時の枠は 0px であるべき");
+    assertEqual(badges[1].style.borderRadius, "0 0 3px 0", "内側配置かつ直角時のバッジは 0 0 3px 0 であるべき");
+  }
+});
+
+test("content: rounded: true 指定時は外側・内側配置に応じて枠とバッジの角丸が接続される", () => {
+  const outsideEl = new MockElement("a", {
+    id: "outside",
+    selectors: ["a"],
+    rect: { left: 20, top: 40, width: 100, height: 24 },
+  });
+  const insideEl = new MockElement("a", {
+    id: "inside",
+    selectors: ["a"],
+    rect: { left: 20, top: 5, width: 100, height: 24 },
+  });
+  const { engine, document } = createContentEnv([outsideEl, insideEl]);
+  const res = engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }], {
+    rounded: true,
+  });
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+
+  assertEqual(badges[0].dataset.placement, "outside", "1件目は outside であるべき");
+  assertEqual(boxes[0].style.borderRadius, "0 6px 6px 6px", "外側配置かつ角丸時の枠は 0 6px 6px 6px であるべき");
+  assertEqual(badges[0].style.borderRadius, "3px 3px 0 0", "外側配置時のバッジは 3px 3px 0 0 であるべき");
+
+  assertEqual(badges[1].dataset.placement, "inside", "2件目は inside であるべき");
+  assertEqual(boxes[1].style.borderRadius, "6px", "内側配置かつ角丸時の枠は 6px であるべき");
+  assertEqual(badges[1].style.borderRadius, "4px 0 3px 0", "内側配置かつ角丸時のバッジは 4px 0 3px 0 であるべき");
+});
+
+test("content: rounded: true で updateAllPositions により outside と inside が切り替わると角丸も追従する", () => {
+  const el = new MockElement("a", {
+    id: "moving",
+    selectors: ["a"],
+    rect: { left: 20, top: 40, width: 100, height: 24 },
+  });
+  const { engine, document } = createContentEnv([el]);
+  const res = engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }], {
+    rounded: true,
+  });
+  assertEqual(res.ok, true, "ok は true であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const box = container.querySelectorAllByAttr("data-webpage-annotator-box")[0];
+  const badge = container.querySelectorAllByAttr("data-webpage-annotator-badge")[0];
+
+  assertEqual(badge.dataset.placement, "outside", "初期状態は outside であるべき");
+  assertEqual(box.style.borderRadius, "0 6px 6px 6px", "初期枠は 0 6px 6px 6px であるべき");
+  assertEqual(badge.style.borderRadius, "3px 3px 0 0", "初期バッジは 3px 3px 0 0 であるべき");
+
+  el._rect = { left: 20, top: 4, width: 100, height: 24 };
+  engine.updateAllPositions();
+  assertEqual(badge.dataset.placement, "inside", "上端移動後は inside に切り替わるべき");
+  assertEqual(box.style.borderRadius, "6px", "inside 切替後の枠は 6px であるべき");
+  assertEqual(badge.style.borderRadius, "4px 0 3px 0", "inside 切替後のバッジは 4px 0 3px 0 であるべき");
+
+  el._rect = { left: 20, top: 50, width: 100, height: 24 };
+  engine.updateAllPositions();
+  assertEqual(badge.dataset.placement, "outside", "下方移動後は outside に戻るべき");
+  assertEqual(box.style.borderRadius, "0 6px 6px 6px", "outside 復帰後の枠は 0 6px 6px 6px であるべき");
+  assertEqual(badge.style.borderRadius, "3px 3px 0 0", "outside 復帰後のバッジは 3px 3px 0 0 であるべき");
+});
+
+for (const [label, invalidRounded] of [
+  ["文字列 (\"true\")", "true"],
+  ["空文字列 (\"\")", ""],
+  ["数値 (1)", 1],
+  ["数値 (0)", 0],
+  ["配列 ([])", []],
+  ["オブジェクト ({})", {}],
+]) {
+  test(`content: 不正な rounded (${label}) はエラーを返しオーバーレイを生成しない`, () => {
+    const elements = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+    const { engine, document } = createContentEnv(elements);
+    const res = engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }], {
+      rounded: invalidRounded,
+    });
+
+    assertEqual(res.ok, false, "ok は false であるべき");
+    assertEqual(
+      res.error,
+      "'rounded' は真偽値（true または false）で指定してください。",
+      "期待するエラーメッセージが返るべき"
+    );
+    assertEqual(
+      document.getElementById("__webpage-annotator-overlay-root"),
+      null,
+      "オーバーレイコンテナは生成されないべき"
+    );
+  });
+}
+
 // --- 結合テスト: sidepanel.js -> content.js ---
 
 test("integration: sidepanel の描画適用から content の onMessage 経由で startNumber が反映される", () => {
@@ -1166,6 +1341,48 @@ test("integration: sidepanel からルール別の prefix / suffix が content �
     ["L-1", "L-2", "BTN 1件"],
     "box 属性もルール別のラベルと一致するべき"
   );
+});
+
+test("integration: sidepanel の描画適用から content の onMessage 経由で rounded: true が反映される", () => {
+  const elements = [
+    new MockElement("a", {
+      id: "a1",
+      selectors: ["a"],
+      rect: { left: 20, top: 40, width: 100, height: 24 },
+    }),
+    new MockElement("a", {
+      id: "a2",
+      selectors: ["a"],
+      rect: { left: 20, top: 5, width: 100, height: 24 },
+    }),
+  ];
+  const contentEnv = createContentEnv(elements);
+  const sentMessages = [];
+  const sidepanelEnv = createSidepanelEnv(jsyaml, sentMessages, (_tabId, message) =>
+    contentEnv.dispatchMessage(message)
+  );
+
+  sidepanelEnv.elements["yaml-input"].value = [
+    "rounded: true",
+    "rules:",
+    '  - selector: "a"',
+    '    color: "#FF3B30"',
+  ].join("\n");
+
+  sidepanelEnv.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+
+  assertEqual(sentMessages.length, 1, "メッセージが1回送信されるべき");
+  assertEqual(sentMessages[0].message.type, "APPLY_ANNOTATIONS", "APPLY_ANNOTATIONS が送信されるべき");
+  assertEqual(sentMessages[0].message.rounded, true, "rounded: true が送信されるべき");
+
+  const container = contentEnv.document.getElementById("__webpage-annotator-overlay-root");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertEqual(boxes[0].style.borderRadius, "0 6px 6px 6px", "外側配置の枠が角丸になるべき");
+  assertEqual(badges[0].style.borderRadius, "3px 3px 0 0", "外側配置のバッジ角丸が維持されるべき");
+  assertEqual(boxes[1].style.borderRadius, "6px", "内側配置の枠が4角丸になるべき");
+  assertEqual(badges[1].style.borderRadius, "4px 0 3px 0", "内側配置のバッジ左上が内径 4px に揃うべき");
 });
 
 let passed = 0;

@@ -17,8 +17,11 @@
   const NUMBERING_MODE_PER_RULE = "perRule";
   const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
   const VALID_NUMBERING_MODES = new Set([NUMBERING_MODE_GLOBAL, NUMBERING_MODE_PER_RULE]);
+  const DEFAULT_ROUNDED = false;
   const BADGE_HEIGHT = 18;
   const BORDER_WIDTH = 2;
+  const ROUNDED_BORDER_RADIUS = 6;
+  const ROUNDED_INNER_BADGE_RADIUS = Math.max(0, ROUNDED_BORDER_RADIUS - BORDER_WIDTH);
   const MAX_Z_INDEX = 2147483647;
 
   let overlayContainer = null;
@@ -80,7 +83,7 @@
   };
 
   const applyBoxPosition = (item) => {
-    const { element, padding, boxEl, badgeEl } = item;
+    const { element, padding, rounded, boxEl, badgeEl } = item;
     if (!isElementVisible(element)) {
       boxEl.style.display = "none";
       return;
@@ -103,12 +106,23 @@
       badgeEl.style.top = "0px";
       badgeEl.style.bottom = "auto";
       badgeEl.style.left = "0px";
-      badgeEl.style.borderRadius = "0 0 3px 0";
+      if (rounded) {
+        boxEl.style.borderRadius = `${ROUNDED_BORDER_RADIUS}px`;
+        badgeEl.style.borderRadius = `${ROUNDED_INNER_BADGE_RADIUS}px 0 3px 0`;
+      } else {
+        boxEl.style.borderRadius = "0px";
+        badgeEl.style.borderRadius = "0 0 3px 0";
+      }
       badgeEl.dataset.placement = "inside";
     } else {
       badgeEl.style.top = "auto";
       badgeEl.style.bottom = "100%";
       badgeEl.style.left = `-${BORDER_WIDTH}px`;
+      if (rounded) {
+        boxEl.style.borderRadius = `0 ${ROUNDED_BORDER_RADIUS}px ${ROUNDED_BORDER_RADIUS}px ${ROUNDED_BORDER_RADIUS}px`;
+      } else {
+        boxEl.style.borderRadius = "0px";
+      }
       badgeEl.style.borderRadius = "3px 3px 0 0";
       badgeEl.dataset.placement = "outside";
     }
@@ -258,6 +272,18 @@
       numberingMode = rawNumberingMode;
     }
 
+    const rawRounded = options ? options.rounded : undefined;
+    let rounded = DEFAULT_ROUNDED;
+    if (rawRounded !== undefined && rawRounded !== null) {
+      if (typeof rawRounded !== "boolean") {
+        return {
+          ok: false,
+          error: "'rounded' は真偽値（true または false）で指定してください。",
+        };
+      }
+      rounded = rawRounded;
+    }
+
     const seenElements = new Set();
     const warnings = [];
     const matchedEntries = [];
@@ -347,6 +373,7 @@
         element: entry.element,
         color: entry.color,
         padding: entry.padding,
+        rounded,
         index: entry.index,
         label: entry.label,
         boxEl,
@@ -374,6 +401,7 @@
           const result = applyAnnotations(message.rules, {
             startNumber: message.startNumber,
             numberingMode: message.numberingMode,
+            rounded: message.rounded,
           });
           sendResponse(result);
         } catch (error) {

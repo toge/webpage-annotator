@@ -33,18 +33,19 @@ YAML 形式で指定した CSS セレクタに一致する DOM 要素へ、枠�
 
 1. ツールバーの **Webpage Annotator** アイコンをクリックしてサイドパネルを開きます。
 2. **「YAML設定」** エディタにルールを記述します（初回起動時はサンプル設定が入力されています）。
-3. **「描画適用」** ボタンをクリックするか、エディタ内で `Ctrl+Enter`（macOS は `Cmd+Enter`）を押すと、アクティブなタブの該当要素に枠線と連番バッジ（デフォルトは `1` から全体通番、`startNumber` で開始番号、`numberingMode` で全体採番／ルールごと採番、各ルールの `prefix`・`suffix` で接頭辞・接尾辞を指定可能）が描画されます。
+3. **「描画適用」** ボタンをクリックするか、エディタ内で `Ctrl+Enter`（macOS は `Cmd+Enter`）を押すと、アクティブなタブの該当要素に枠線と連番バッジ（デフォルトは `1` から全体通番、`startNumber` で開始番号、`numberingMode` で全体採番／ルールごと採番、`rounded` で枠の角丸有無、各ルールの `prefix`・`suffix` で接頭辞・接尾辞を指定可能）が描画されます。
 4. オーバーレイを消去したい場合は **「クリア」** ボタンをクリックします。
 
 ## YAML 設定仕様
 
-ルートに `rules` 配列（および任意の `startNumber`、`numberingMode`）を持つオブジェクト形式で記述します。
+ルートに `rules` 配列（および任意の `startNumber`、`numberingMode`、`rounded`）を持つオブジェクト形式で記述します。
 
 ### 設定例
 
 ```yaml
 startNumber: 10 # 省略時は 1 から採番
 numberingMode: "perRule" # "global"（省略時: 全体で採番）または "perRule"（ルールごとに採番）
+rounded: true # true: 枠を角丸にする / false（省略時）: 直角枠
 rules:
   - selector: "a"
     color: "#FF3B30"
@@ -63,6 +64,7 @@ rules:
 | --- | --- | --- | --- | --- |
 | `startNumber` | 任意 | 整数 | `1` | 連番バッジの開始番号（`0` 以上の安全な整数） |
 | `numberingMode` | 任意 | 文字列 | `"global"` | 採番方式（`"global"`: 全体で採番、`"perRule"`: ルールごとに `startNumber` から採番） |
+| `rounded` | 任意 | 真偽値 | `false` | 枠線を角丸にするかどうか（`true`: 角丸、`false`: 直角） |
 | `rules` | 必須 | 配列 | なし | 描画ルールの配列 |
 
 ### ルール項目
@@ -77,7 +79,7 @@ rules:
 
 ### バリデーションとエラー時の挙動
 
-- YAML の構文エラー、`rules` が配列でない場合、`startNumber` に `0` 以上の整数以外（負数・小数・文字列・真偽値など）が指定された場合、`numberingMode` に `"global"`・`"perRule"` 以外が指定された場合、またはルールの `prefix`・`suffix` に文字列以外が指定された場合はエラーを表示して処理を中断します。
+- YAML の構文エラー、`rules` が配列でない場合、`startNumber` に `0` 以上の整数以外（負数・小数・文字列・真偽値など）が指定された場合、`numberingMode` に `"global"`・`"perRule"` 以外が指定された場合、`rounded` に真偽値（`true` / `false`）以外が指定された場合、またはルールの `prefix`・`suffix` に文字列以外が指定された場合はエラーを表示して処理を中断します。
 - 個別ルール内の不正な CSS セレクタやオブジェクトでないエントリは警告を表示してスキップし、残りの有効なルールを適用します。
 - 不正な `color` や負数・数値以外の `padding` が指定された場合は、警告を表示したうえでデフォルト値（`#FF3B30` / `0`）を使用します。
 
