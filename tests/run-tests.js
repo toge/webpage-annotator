@@ -391,6 +391,58 @@ for (const [label, line] of invalidYamlCases) {
   });
 }
 
+test("sidepanel: numberingMode 未指定時はデフォルト値 'global' を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('rules:\n  - selector: "a"\n');
+  assertEqual(result.numberingMode, "global", "numberingMode は 'global' であるべき");
+  assertEqual(sidepanel.DEFAULT_NUMBERING_MODE, "global", "DEFAULT_NUMBERING_MODE が公開されるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: numberingMode が null（値なし）のときはデフォルト値 'global' を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('numberingMode:\nrules:\n  - selector: "a"\n');
+  assertEqual(result.numberingMode, "global", "numberingMode: null は 'global' になるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: numberingMode: 'global' を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('numberingMode: "global"\nrules:\n  - selector: "a"\n');
+  assertEqual(result.numberingMode, "global", "numberingMode は 'global' であるべき");
+});
+
+test("sidepanel: numberingMode: 'perRule' を許容する", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml('numberingMode: "perRule"\nrules:\n  - selector: "a"\n');
+  assertEqual(result.numberingMode, "perRule", "numberingMode は 'perRule' であるべき");
+});
+
+const invalidNumberingModeYamlCases = [
+  ["空文字列 (\"\")", 'numberingMode: ""'],
+  ["大文字違い (\"Global\")", 'numberingMode: "Global"'],
+  ["小文字違い (\"perrule\")", 'numberingMode: "perrule"'],
+  ["ハイフン区切り (\"per-rule\")", 'numberingMode: "per-rule"'],
+  ["前後空白あり (\" perRule \")", 'numberingMode: " perRule "'],
+  ["未知の文字列 (\"rule\")", 'numberingMode: "rule"'],
+  ["数値 (1)", "numberingMode: 1"],
+  ["真偽値 (true)", "numberingMode: true"],
+  ["真偽値 (false)", "numberingMode: false"],
+  ["配列 ([\"global\"])", 'numberingMode: ["global"]'],
+  ["オブジェクト ({})", "numberingMode: {}"],
+];
+
+for (const [label, line] of invalidNumberingModeYamlCases) {
+  test(`sidepanel: 不正な numberingMode (${label}) はエラーで中断する`, () => {
+    const { sidepanel } = createSidepanelEnv(jsyaml);
+    assertThrows(
+      () => sidepanel.parseAndValidateYaml(`${line}\nrules:\n  - selector: "a"\n`),
+      '\'numberingMode\' は "global" または "perRule" で指定してください。',
+      `不正値 (${label}) はエラーを投げるべき`
+    );
+  });
+}
+
 // --- content.js: applyAnnotations ---
 
 test("content: 第2引数省略（後方互換）で 1 から連番採番される", () => {
@@ -562,6 +614,260 @@ test("content: startNumber が MAX_SAFE_INTEGER のとき1件なら成功し2件
   );
 });
 
+test("content: numberingMode: 'global' 指定時は複数ルールを通して連番採番される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("button", { id: "b2", selectors: ["button"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { numberingMode: "global" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 4, "count は 4 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["1", "2", "3", "4"],
+    "全体で 1, 2, 3, 4 と採番されるべき"
+  );
+});
+
+test("content: numberingMode: 'perRule' 指定時は各ルールごとにデフォルト 1 からリセット採番される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("button", { id: "b2", selectors: ["button"] }),
+    new MockElement("button", { id: "b3", selectors: ["button"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { numberingMode: "perRule" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 5, "count は合計描画件数 5 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["1", "2", "1", "2", "3"],
+    "ルールごとに 1, 2 / 1, 2, 3 と採番されるべき"
+  );
+  assertDeepEqual(
+    badges.map((b) => b.getAttribute("data-webpage-annotator-badge")),
+    ["1", "2", "1", "2", "3"],
+    "badge 属性もルールごとに採番されるべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    ["1", "2", "1", "2", "3"],
+    "box 属性もルールごとに採番されるべき"
+  );
+});
+
+test("content: numberingMode: 'perRule' かつ startNumber: 0 / 10 で各ルールが指定番号からリセット採番される", () => {
+  const makeElements = () => [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("button", { id: "b2", selectors: ["button"] }),
+  ];
+
+  const envZero = createContentEnv(makeElements());
+  const resZero = envZero.engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 0, numberingMode: "perRule" }
+  );
+  assertEqual(resZero.ok, true, "startNumber: 0 で ok は true であるべき");
+  assertDeepEqual(
+    envZero.document
+      .getElementById("__webpage-annotator-overlay-root")
+      .querySelectorAllByAttr("data-webpage-annotator-badge")
+      .map((b) => b.textContent),
+    ["0", "1", "0", "1"],
+    "各ルールが 0 から採番されるべき"
+  );
+
+  const envTen = createContentEnv(makeElements());
+  const resTen = envTen.engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 10, numberingMode: "perRule" }
+  );
+  assertEqual(resTen.ok, true, "startNumber: 10 で ok は true であるべき");
+  assertDeepEqual(
+    envTen.document
+      .getElementById("__webpage-annotator-overlay-root")
+      .querySelectorAllByAttr("data-webpage-annotator-badge")
+      .map((b) => b.textContent),
+    ["10", "11", "10", "11"],
+    "各ルールが 10 から採番されるべき"
+  );
+});
+
+test("content: numberingMode: 'perRule' で重複・非表示・幅0要素をスキップしても欠番なく採番される", () => {
+  const dupVisible = new MockElement("a", { id: "a1", selectors: ["a", ".special"] });
+  const hidden = new MockElement("a", { id: "a2", selectors: ["a"], display: "none" });
+  const zeroWidth = new MockElement("a", {
+    id: "a3",
+    selectors: ["a"],
+    rect: { left: 0, top: 0, width: 0, height: 20 },
+  });
+  const secondA = new MockElement("a", { id: "a4", selectors: ["a"] });
+  const firstSpecialOnly = new MockElement("button", { id: "b1", selectors: [".special"] });
+  const secondSpecialOnly = new MockElement("button", { id: "b2", selectors: [".special"] });
+
+  const { engine, document } = createContentEnv([
+    dupVisible,
+    hidden,
+    zeroWidth,
+    secondA,
+    firstSpecialOnly,
+    secondSpecialOnly,
+  ]);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: ".special", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 1, numberingMode: "perRule" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 4, "count は 4 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["1", "2", "1", "2"],
+    "重複・非表示要素スキップ後もルールごとに欠番なく 1, 2 / 1, 2 と採番されるべき"
+  );
+});
+
+test("content: numberingMode: 'perRule' で 0 件マッチのルールを挟んでも後続ルールが正しく採番される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("button", { id: "b2", selectors: ["button"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: ".not-found", color: "#34C759", padding: 0 },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 3, numberingMode: "perRule" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 3, "count は 3 であるべき");
+  assertDeepEqual(
+    document
+      .getElementById("__webpage-annotator-overlay-root")
+      .querySelectorAllByAttr("data-webpage-annotator-badge")
+      .map((b) => b.textContent),
+    ["3", "3", "4"],
+    "0件マッチのルールを挟んでも後続ルールが 3, 4 で採番されるべき"
+  );
+});
+
+test("content: numberingMode: 'perRule' かつ MAX_SAFE_INTEGER のとき各ルール1件なら成功し同一ルール2件ならエラー", () => {
+  const onePerRule = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+  ];
+  const envOk = createContentEnv(onePerRule);
+  const resOk = envOk.engine.applyAnnotations(
+    [{ selector: "a" }, { selector: "button" }],
+    { startNumber: Number.MAX_SAFE_INTEGER, numberingMode: "perRule" }
+  );
+  assertEqual(resOk.ok, true, "各ルール1件ずつなら成功するべき");
+  assertDeepEqual(
+    envOk.document
+      .getElementById("__webpage-annotator-overlay-root")
+      .querySelectorAllByAttr("data-webpage-annotator-badge")
+      .map((b) => b.textContent),
+    [String(Number.MAX_SAFE_INTEGER), String(Number.MAX_SAFE_INTEGER)],
+    "各ルールが MAX_SAFE_INTEGER で描画されるべき"
+  );
+
+  const twoInSameRule = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+  ];
+  const envErr = createContentEnv(twoInSameRule);
+  const resErr = envErr.engine.applyAnnotations([{ selector: "a" }], {
+    startNumber: Number.MAX_SAFE_INTEGER,
+    numberingMode: "perRule",
+  });
+  assertEqual(resErr.ok, false, "同一ルール2件で上限超過エラーを返すべき");
+  assertEqual(
+    resErr.error,
+    "連番が安全な整数の上限を超えました。",
+    "上限超過エラーメッセージが返るべき"
+  );
+  assertEqual(
+    envErr.document.getElementById("__webpage-annotator-overlay-root"),
+    null,
+    "オーバーレイは生成されないべき"
+  );
+});
+
+for (const [label, invalidMode] of [
+  ["空文字列 (\"\")", ""],
+  ["大文字違い (\"Global\")", "Global"],
+  ["ハイフン区切り (\"per-rule\")", "per-rule"],
+  ["前後空白あり (\" perRule \")", " perRule "],
+  ["数値 (1)", 1],
+  ["真偽値 (true)", true],
+  ["配列 ([])", []],
+  ["オブジェクト ({})", {}],
+]) {
+  test(`content: 不正な numberingMode (${label}) はエラーを返しオーバーレイを生成しない`, () => {
+    const elements = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+    const { engine, document } = createContentEnv(elements);
+    const res = engine.applyAnnotations([{ selector: "a", color: "#FF3B30", padding: 0 }], {
+      numberingMode: invalidMode,
+    });
+
+    assertEqual(res.ok, false, "ok は false であるべき");
+    assertEqual(
+      res.error,
+      '\'numberingMode\' は "global" または "perRule" で指定してください。',
+      "期待するエラーメッセージが返るべき"
+    );
+    assertEqual(
+      document.getElementById("__webpage-annotator-overlay-root"),
+      null,
+      "オーバーレイコンテナは生成されないべき"
+    );
+  });
+}
+
 // --- 結合テスト: sidepanel.js -> content.js ---
 
 test("integration: sidepanel の描画適用から content の onMessage 経由で startNumber が反映される", () => {
@@ -600,6 +906,50 @@ test("integration: sidepanel の描画適用から content の onMessage 経由�
     sidepanelEnv.elements["status-message"].textContent,
     "2 件の要素にオーバーレイを描画しました。",
     "ステータスメッセージが正しく表示されるべき"
+  );
+});
+
+test("integration: sidepanel の描画適用から content の onMessage 経由で numberingMode: 'perRule' が反映される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+  ];
+  const contentEnv = createContentEnv(elements);
+  const sentMessages = [];
+  const sidepanelEnv = createSidepanelEnv(jsyaml, sentMessages, (_tabId, message) =>
+    contentEnv.dispatchMessage(message)
+  );
+
+  sidepanelEnv.elements["yaml-input"].value = [
+    "startNumber: 5",
+    'numberingMode: "perRule"',
+    "rules:",
+    '  - selector: "a"',
+    '    color: "#FF3B30"',
+    '  - selector: "button"',
+    '    color: "#007AFF"',
+  ].join("\n");
+
+  sidepanelEnv.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+
+  assertEqual(sentMessages.length, 1, "メッセージが1回送信されるべき");
+  assertEqual(sentMessages[0].message.type, "APPLY_ANNOTATIONS", "APPLY_ANNOTATIONS が送信されるべき");
+  assertEqual(sentMessages[0].message.startNumber, 5, "startNumber: 5 が送信されるべき");
+  assertEqual(sentMessages[0].message.numberingMode, "perRule", "numberingMode: 'perRule' が送信されるべき");
+
+  const container = contentEnv.document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["5", "6", "5"],
+    "content.js でルールごとに 5, 6 / 5 が描画されるべき"
+  );
+  assertEqual(
+    sidepanelEnv.elements["status-message"].textContent,
+    "3 件の要素にオーバーレイを描画しました。",
+    "ステータスメッセージが合計件数 3 で表示されるべき"
   );
 });
 

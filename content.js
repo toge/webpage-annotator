@@ -11,6 +11,10 @@
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
   const DEFAULT_START_NUMBER = 1;
+  const NUMBERING_MODE_GLOBAL = "global";
+  const NUMBERING_MODE_PER_RULE = "perRule";
+  const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
+  const VALID_NUMBERING_MODES = new Set([NUMBERING_MODE_GLOBAL, NUMBERING_MODE_PER_RULE]);
   const BADGE_HEIGHT = 18;
   const BORDER_WIDTH = 2;
   const MAX_Z_INDEX = 2147483647;
@@ -236,6 +240,21 @@
       startNumber = rawStartNumber;
     }
 
+    const rawNumberingMode = options ? options.numberingMode : undefined;
+    let numberingMode = DEFAULT_NUMBERING_MODE;
+    if (rawNumberingMode !== undefined && rawNumberingMode !== null) {
+      if (
+        typeof rawNumberingMode !== "string" ||
+        !VALID_NUMBERING_MODES.has(rawNumberingMode)
+      ) {
+        return {
+          ok: false,
+          error: '\'numberingMode\' は "global" または "perRule" で指定してください。',
+        };
+      }
+      numberingMode = rawNumberingMode;
+    }
+
     const seenElements = new Set();
     const warnings = [];
     const matchedEntries = [];
@@ -264,6 +283,7 @@
         continue;
       }
 
+      let ruleMatchedCount = 0;
       for (const element of elements) {
         if (seenElements.has(element) || isOverlayNode(element)) {
           continue;
@@ -271,11 +291,14 @@
         if (!isElementVisible(element)) {
           continue;
         }
-        const nextIndex = startNumber + matchedEntries.length;
+        const offset =
+          numberingMode === NUMBERING_MODE_PER_RULE ? ruleMatchedCount : matchedEntries.length;
+        const nextIndex = startNumber + offset;
         if (!Number.isSafeInteger(nextIndex)) {
           return { ok: false, error: "連番が安全な整数の上限を超えました。" };
         }
         seenElements.add(element);
+        ruleMatchedCount += 1;
         matchedEntries.push({
           element,
           color,
@@ -323,6 +346,7 @@
         try {
           const result = applyAnnotations(message.rules, {
             startNumber: message.startNumber,
+            numberingMode: message.numberingMode,
           });
           sendResponse(result);
         } catch (error) {

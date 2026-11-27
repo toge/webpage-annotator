@@ -5,6 +5,10 @@
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
   const DEFAULT_START_NUMBER = 1;
+  const NUMBERING_MODE_GLOBAL = "global";
+  const NUMBERING_MODE_PER_RULE = "perRule";
+  const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
+  const VALID_NUMBERING_MODES = new Set([NUMBERING_MODE_GLOBAL, NUMBERING_MODE_PER_RULE]);
   const DEFAULT_YAML = [
     "rules:",
     '  - selector: "a"',
@@ -96,6 +100,17 @@
       startNumber = parsed.startNumber;
     }
 
+    let numberingMode = DEFAULT_NUMBERING_MODE;
+    if (parsed.numberingMode !== undefined && parsed.numberingMode !== null) {
+      if (
+        typeof parsed.numberingMode !== "string" ||
+        !VALID_NUMBERING_MODES.has(parsed.numberingMode)
+      ) {
+        throw new Error('\'numberingMode\' は "global" または "perRule" で指定してください。');
+      }
+      numberingMode = parsed.numberingMode;
+    }
+
     const rules = [];
     const warnings = [];
     const selectorValidator = document.createDocumentFragment();
@@ -154,7 +169,7 @@
       throw new Error(`有効なルールがありません。${detail}`);
     }
 
-    return { rules, startNumber, warnings };
+    return { rules, startNumber, numberingMode, warnings };
   };
 
   const saveYamlImmediate = async (value) => {
@@ -260,6 +275,7 @@
         type: "APPLY_ANNOTATIONS",
         rules: parsedResult.rules,
         startNumber: parsedResult.startNumber,
+        numberingMode: parsedResult.numberingMode,
       });
 
       if (!response || !response.ok) {
@@ -326,6 +342,7 @@
       DEFAULT_COLOR,
       DEFAULT_PADDING,
       DEFAULT_START_NUMBER,
+      DEFAULT_NUMBERING_MODE,
     };
   }
 
