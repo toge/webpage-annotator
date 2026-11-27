@@ -234,7 +234,9 @@ const createSidepanelEnv = (
   const storageData = { ...(options.storageData || {}) };
   const storageSets = options.storageSets || [];
   const storageGetGate = options.storageGetGate;
+  const storageSetGate = options.storageSetGate;
   let activeTabUrl = options.tabUrl || "https://example.com/";
+  let activeTabId = options.tabId || 101;
 
   const createChromeEvent = () => {
     const listeners = [];
@@ -271,13 +273,21 @@ const createSidepanelEnv = (
           if (options.storageSetError) {
             throw new Error(options.storageSetError);
           }
+          if (storageSetGate) {
+            await storageSetGate(items);
+          }
           Object.assign(storageData, items);
           storageSets.push(items);
         },
       },
     },
     tabs: {
-      query: async () => [{ id: 101, url: activeTabUrl }],
+      query: async () => {
+        if (options.tabQueryError) {
+          throw new Error(options.tabQueryError);
+        }
+        return [{ id: activeTabId, url: activeTabUrl }];
+      },
       sendMessage: async (tabId, message) => {
         sentMessages.push({ tabId, message });
         return typeof tabResponse === "function" ? tabResponse(tabId, message) : tabResponse;
@@ -300,8 +310,9 @@ const createSidepanelEnv = (
     storageData,
     storageSets,
     tabEvents,
-    setTabUrl: (url) => {
+    setTabUrl: (url, id = activeTabId) => {
       activeTabUrl = url;
+      activeTabId = id;
     },
     runTimers,
     sidepanel: mockWindow.__webpageAnnotatorSidepanel,
@@ -871,6 +882,112 @@ test("sidepanel: 入力したYAMLはURLごとのキーに保存され、URL別�
     [{ "yamlConfig:https://example.com/other": typed }],
     "URLごとのキーに保存されるべき"
   );
+});
+
+test("sidepanel: タブ切替で保留中入力を保存完了してから元URLの設定を復元する", () => {
+  const oldYaml = 'rules:\n  - selector: "old"\n';
+  const bYaml = 'rules:\n  - selector: "b"\n';
+  const typed = 'rules:\n  - selector: "new"\n';
+  let releaseSave = () => {};
+  let shouldBlock = false;
+  const env = createSidepanelEnv(jsyaml, [], undefined, {
+    tabId: 1,
+    tabUrl: "https://example.com/a",
+    storageData: {
+      "yamlConfig:https://example.com/a": oldYaml,
+      "yamlConfig:https://example.com/b": bYaml,
+    },
+    storageSetGate: async () => {
+      if (shouldBlock) {
+        await new Promise((resolve) => {
+          releaseSave = resolve;
+        });
+        shouldBlock = false;
+      }
+    },
+  });
+  flushMicrotasks();
+
+  env.elements["yaml-input"].value = typed;
+  env.elements["yaml-input"].dispatchEvent("input");
+  shouldBlock = true;
+  env.setTabUrl("https://example.com/b", 2);
+  env.tabEvents.onActivated.fire({ tabId: 2, windowId: 1 });
+  flushMicrotasks();
+  env.setTabUrl("https://example.com/a", 1);
+  env.tabEvents.onActivated.fire({ tabId: 1, windowId: 1 });
+  flushMicrotasks();
+
+  releaseSave();
+  flushMicrotasks();
+  flushMicrotasks();
+
+  assertEqual(
+    env.elements["yaml-input"].value,
+    typed,
+    "保存完了後に元URLへ戻った場合は最新の入力を復元するべき"
+  );
+});
+
+test("sidepanel: 適用中にタブを切り替えても操作開始時のタブへ描画する", () => {
+  let releaseSave = () => {};
+  let shouldBlock = false;
+  const sentMessages = [];
+  const env = createSidepanelEnv(jsyaml, sentMessages, undefined, {
+    tabId: 1,
+    tabUrl: "https://example.com/a",
+    storageSetGate: async () => {
+      if (shouldBlock) {
+        await new Promise((resolve) => {
+          releaseSave = resolve;
+        });
+        shouldBlock = false;
+      }
+    },
+  });
+  flushMicrotasks();
+
+  env.elements["yaml-input"].value = 'rules:\n  - selector: ".from-a"\n';
+  shouldBlock = true;
+  env.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+
+  env.setTabUrl("https://example.com/b", 2);
+  env.tabEvents.onActivated.fire({ tabId: 2, windowId: 1 });
+  flushMicrotasks();
+  releaseSave();
+  flushMicrotasks();
+  flushMicrotasks();
+
+  assertEqual(sentMessages.length, 1, "描画メッセージは1回送信されるべき");
+  assertEqual(sentMessages[0].tabId, 1, "適用開始時のタブIDへ送信されるべき");
+  assertEqual(
+    sentMessages[0].message.rules[0].selector,
+    ".from-a",
+    "適用開始時のYAMLが送信されるべき"
+  );
+});
+
+test("sidepanel: タブ取得に失敗しても不正なYAMLはYAML検証エラーとして表示する", () => {
+  const sentMessages = [];
+  const env = createSidepanelEnv(jsyaml, sentMessages, undefined, {
+    tabId: 1,
+    tabUrl: "https://example.com/a",
+    tabQueryError: "tab query failed",
+  });
+  flushMicrotasks();
+
+  env.elements["yaml-input"].value = "not-rules: true";
+  env.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+  flushMicrotasks();
+
+  assertEqual(
+    env.elements["error-message"].textContent,
+    "'rules' は配列で指定してください。",
+    "YAML検証エラーを優先して表示するべき"
+  );
+  assertEqual(sentMessages.length, 0, "描画メッセージは送信されないべき");
 });
 
 // --- content.js: applyAnnotations ---

@@ -32,6 +32,7 @@
 
   let saveTimerId = null;
   let pendingSave = null;
+  let saveChain = Promise.resolve();
   let currentStorageKey = STORAGE_KEY;
   let restoreSeq = 0;
 
@@ -214,18 +215,21 @@
     return { rules, startNumber, numberingMode, rounded, warnings };
   };
 
-  const saveYamlImmediate = async (storageKey, value) => {
-    try {
-      await chrome.storage.local.set({ [storageKey]: value });
-    } catch (error) {
-      console.error("[Webpage Annotator] Failed to save YAML:", error);
-      showError("YAML設定を保存できませんでした。ストレージの空き容量や拡張機能の状態を確認してください。");
-    }
+  const saveYamlImmediate = (storageKey, value) => {
+    saveChain = saveChain.then(async () => {
+      try {
+        await chrome.storage.local.set({ [storageKey]: value });
+      } catch (error) {
+        console.error("[Webpage Annotator] Failed to save YAML:", error);
+        showError("YAML設定を保存できませんでした。ストレージの空き容量や拡張機能の状態を確認してください。");
+      }
+    });
+    return saveChain;
   };
 
   const flushPendingSave = () => {
     if (!pendingSave) {
-      return;
+      return saveChain;
     }
     const { storageKey, value } = pendingSave;
     pendingSave = null;
@@ -233,7 +237,7 @@
       window.clearTimeout(saveTimerId);
       saveTimerId = null;
     }
-    saveYamlImmediate(storageKey, value);
+    return saveYamlImmediate(storageKey, value);
   };
 
   const scheduleSaveYaml = (value) => {
@@ -253,9 +257,13 @@
   const restoreYaml = async (tab) => {
     const seq = ++restoreSeq;
     // 読み直しで未保存の入力を失わないよう、先に保留分を保存する
-    flushPendingSave();
+    const pendingSavePromise = flushPendingSave();
     let storageKey = STORAGE_KEY;
     try {
+      await pendingSavePromise;
+      if (seq !== restoreSeq) {
+        return;
+      }
       const activeTab = tab || (await getActiveTab());
       storageKey = storageKeyForUrl(activeTab && activeTab.url);
       // 旧バージョンのグローバル設定は、URL別の設定がない場合のみ引き継ぐ
@@ -337,25 +345,31 @@
 
   const handleApply = async () => {
     clearMessages();
-    const yamlText = yamlInput.value;
-    await saveYamlImmediate(currentStorageKey, yamlText);
-
-    let parsedResult;
-    try {
-      parsedResult = parseAndValidateYaml(yamlText);
-    } catch (error) {
-      showError(error.message);
-      return;
-    }
-
     setBusy(true);
+    const yamlText = yamlInput.value;
+    const storageKey = currentStorageKey;
     try {
-      const tab = await getActiveTab();
+      const tabResultPromise = getActiveTab().then(
+        (tab) => ({ tab }),
+        (error) => ({ error })
+      );
+      await saveYamlImmediate(storageKey, yamlText);
+      let parsedResult;
+      try {
+        parsedResult = parseAndValidateYaml(yamlText);
+      } catch (error) {
+        showError(error.message);
+        return;
+      }
+      const tabResult = await tabResultPromise;
+      if (tabResult.error) {
+        throw tabResult.error;
+      }
+      const tab = tabResult.tab;
       if (!tab) {
         showError("アクティブなタブが見つかりませんでした。");
         return;
       }
-
       const response = await sendMessageToTab(tab.id, {
         type: "APPLY_ANNOTATIONS",
         rules: parsedResult.rules,
