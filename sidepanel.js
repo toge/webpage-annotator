@@ -5,6 +5,8 @@
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
   const DEFAULT_START_NUMBER = 1;
+  const DEFAULT_PREFIX = "";
+  const DEFAULT_SUFFIX = "";
   const NUMBERING_MODE_GLOBAL = "global";
   const NUMBERING_MODE_PER_RULE = "perRule";
   const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
@@ -161,7 +163,23 @@
         }
       }
 
-      rules.push({ selector, color, padding });
+      let prefix = DEFAULT_PREFIX;
+      if (rawRule.prefix !== undefined && rawRule.prefix !== null) {
+        if (typeof rawRule.prefix !== "string") {
+          throw new Error(`ルール #${ruleNo}: 'prefix' は文字列で指定してください。`);
+        }
+        prefix = rawRule.prefix;
+      }
+
+      let suffix = DEFAULT_SUFFIX;
+      if (rawRule.suffix !== undefined && rawRule.suffix !== null) {
+        if (typeof rawRule.suffix !== "string") {
+          throw new Error(`ルール #${ruleNo}: 'suffix' は文字列で指定してください。`);
+        }
+        suffix = rawRule.suffix;
+      }
+
+      rules.push({ selector, color, padding, prefix, suffix });
     });
 
     if (rules.length === 0) {
@@ -343,6 +361,8 @@
       DEFAULT_PADDING,
       DEFAULT_START_NUMBER,
       DEFAULT_NUMBERING_MODE,
+      DEFAULT_PREFIX,
+      DEFAULT_SUFFIX,
     };
   }
 

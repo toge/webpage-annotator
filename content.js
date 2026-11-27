@@ -11,6 +11,8 @@
   const DEFAULT_COLOR = "#FF3B30";
   const DEFAULT_PADDING = 0;
   const DEFAULT_START_NUMBER = 1;
+  const DEFAULT_PREFIX = "";
+  const DEFAULT_SUFFIX = "";
   const NUMBERING_MODE_GLOBAL = "global";
   const NUMBERING_MODE_PER_RULE = "perRule";
   const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
@@ -166,9 +168,10 @@
     }
   };
 
-  const createAnnotationElements = (index, color) => {
+  const createAnnotationElements = (label, color) => {
+    const labelText = String(label);
     const boxEl = document.createElement("div");
-    boxEl.setAttribute("data-webpage-annotator-box", String(index));
+    boxEl.setAttribute("data-webpage-annotator-box", labelText);
     boxEl.style.cssText = [
       "position: absolute",
       "box-sizing: border-box",
@@ -180,8 +183,8 @@
     ].join("; ");
 
     const badgeEl = document.createElement("span");
-    badgeEl.setAttribute("data-webpage-annotator-badge", String(index));
-    badgeEl.textContent = String(index);
+    badgeEl.setAttribute("data-webpage-annotator-badge", labelText);
+    badgeEl.textContent = labelText;
     badgeEl.style.cssText = [
       "position: absolute",
       "box-sizing: border-box",
@@ -273,6 +276,28 @@
       const paddingValue = Number(rawRule.padding);
       const padding = Number.isFinite(paddingValue) && paddingValue >= 0 ? paddingValue : DEFAULT_PADDING;
 
+      let prefix = DEFAULT_PREFIX;
+      if (rawRule.prefix !== undefined && rawRule.prefix !== null) {
+        if (typeof rawRule.prefix !== "string") {
+          return {
+            ok: false,
+            error: `ルール #${ruleIndex + 1}: 'prefix' は文字列で指定してください。`,
+          };
+        }
+        prefix = rawRule.prefix;
+      }
+
+      let suffix = DEFAULT_SUFFIX;
+      if (rawRule.suffix !== undefined && rawRule.suffix !== null) {
+        if (typeof rawRule.suffix !== "string") {
+          return {
+            ok: false,
+            error: `ルール #${ruleIndex + 1}: 'suffix' は文字列で指定してください。`,
+          };
+        }
+        suffix = rawRule.suffix;
+      }
+
       let elements;
       try {
         elements = document.querySelectorAll(selector);
@@ -304,6 +329,7 @@
           color,
           padding,
           index: nextIndex,
+          label: `${prefix}${nextIndex}${suffix}`,
         });
       }
     }
@@ -316,12 +342,13 @@
     const fragment = document.createDocumentFragment();
 
     for (const entry of matchedEntries) {
-      const { boxEl, badgeEl } = createAnnotationElements(entry.index, entry.color);
+      const { boxEl, badgeEl } = createAnnotationElements(entry.label, entry.color);
       const item = {
         element: entry.element,
         color: entry.color,
         padding: entry.padding,
         index: entry.index,
+        label: entry.label,
         boxEl,
         badgeEl,
       };

@@ -443,6 +443,73 @@ for (const [label, line] of invalidNumberingModeYamlCases) {
   });
 }
 
+test("sidepanel: prefix / suffix 未指定時および null 時は空文字 '' を返す", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  assertEqual(sidepanel.DEFAULT_PREFIX, "", "DEFAULT_PREFIX が公開されるべき");
+  assertEqual(sidepanel.DEFAULT_SUFFIX, "", "DEFAULT_SUFFIX が公開されるべき");
+
+  const result = sidepanel.parseAndValidateYaml(
+    [
+      "rules:",
+      '  - selector: "a"',
+      '  - selector: "button"',
+      "    prefix:",
+      "    suffix:",
+    ].join("\n")
+  );
+  assertEqual(result.rules[0].prefix, "", "未指定の prefix は '' であるべき");
+  assertEqual(result.rules[0].suffix, "", "未指定の suffix は '' であるべき");
+  assertEqual(result.rules[1].prefix, "", "null の prefix は '' であるべき");
+  assertEqual(result.rules[1].suffix, "", "null の suffix は '' であるべき");
+  assertEqual(result.warnings.length, 0, "警告は 0 件であるべき");
+});
+
+test("sidepanel: prefix / suffix の文字列は前後空白・日本語・記号を含めそのまま保持される", () => {
+  const { sidepanel } = createSidepanelEnv(jsyaml);
+  const result = sidepanel.parseAndValidateYaml(
+    [
+      "rules:",
+      '  - selector: "a"',
+      '    prefix: " L- "',
+      '    suffix: " 件"',
+      '  - selector: "button"',
+      '    prefix: ""',
+      '    suffix: "#"',
+    ].join("\n")
+  );
+  assertEqual(result.rules[0].prefix, " L- ", "prefix の前後空白が保持されるべき");
+  assertEqual(result.rules[0].suffix, " 件", "suffix の前後空白と日本語が保持されるべき");
+  assertEqual(result.rules[1].prefix, "", "空文字 prefix が保持されるべき");
+  assertEqual(result.rules[1].suffix, "#", "記号 suffix が保持されるべき");
+});
+
+const invalidPrefixSuffixCases = [
+  ["数値 (123)", "123"],
+  ["真偽値 (true)", "true"],
+  ["真偽値 (false)", "false"],
+  ["配列 ([\"a\"])", '["a"]'],
+  ["オブジェクト ({})", "{}"],
+];
+
+for (const field of ["prefix", "suffix"]) {
+  for (const [label, yamlValue] of invalidPrefixSuffixCases) {
+    test(`sidepanel: 不正な ${field} (${label}) はルール番号付きエラーで中断する`, () => {
+      const { sidepanel } = createSidepanelEnv(jsyaml);
+      const yamlText = [
+        "rules:",
+        '  - selector: "a"',
+        '  - selector: "button"',
+        `    ${field}: ${yamlValue}`,
+      ].join("\n");
+      assertThrows(
+        () => sidepanel.parseAndValidateYaml(yamlText),
+        `ルール #2: '${field}' は文字列で指定してください。`,
+        `不正な ${field} (${label}) はエラーを投げるべき`
+      );
+    });
+  }
+}
+
 // --- content.js: applyAnnotations ---
 
 test("content: 第2引数省略（後方互換）で 1 から連番採番される", () => {
@@ -868,6 +935,105 @@ for (const [label, invalidMode] of [
   });
 }
 
+test("content: ルールごとに prefix / suffix を設定するとバッジと data 属性に反映される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("input", { id: "i1", selectors: ["input"] }),
+    new MockElement("span", { id: "s1", selectors: ["span"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0, prefix: "L-" },
+      { selector: "button", color: "#007AFF", padding: 0, suffix: "件" },
+      { selector: "input", color: "#34C759", padding: 0, prefix: " IN ", suffix: " pt" },
+      { selector: "span", color: "#AF52DE", padding: 0 },
+    ],
+    { startNumber: 1, numberingMode: "perRule" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 5, "count は 5 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  const expectedLabels = ["L-1", "L-2", "1件", " IN 1 pt", "1"];
+
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    expectedLabels,
+    "バッジテキストが期待するラベルと一致するべき"
+  );
+  assertDeepEqual(
+    badges.map((b) => b.getAttribute("data-webpage-annotator-badge")),
+    expectedLabels,
+    "data-webpage-annotator-badge 属性が期待するラベルと一致するべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    expectedLabels,
+    "data-webpage-annotator-box 属性が期待するラベルと一致するべき"
+  );
+});
+
+test("content: prefix / suffix と numberingMode: 'global'・startNumber: 10 の組み合わせ", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0, prefix: "A-" },
+      { selector: "button", color: "#007AFF", padding: 0, prefix: "B-", suffix: "!" },
+    ],
+    { startNumber: 10, numberingMode: "global" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  const badges = document
+    .getElementById("__webpage-annotator-overlay-root")
+    .querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["A-10", "B-11!"],
+    "全体採番とルール別接頭辞・接尾辞が組み合わさるべき"
+  );
+});
+
+for (const field of ["prefix", "suffix"]) {
+  for (const [label, invalidValue] of [
+    ["数値 (123)", 123],
+    ["真偽値 (true)", true],
+    ["配列 ([])", []],
+    ["オブジェクト ({})", {}],
+  ]) {
+    test(`content: 不正な ${field} (${label}) はマッチ 0 件のルールでもエラーを返しオーバーレイを生成しない`, () => {
+      const elements = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+      const { engine, document } = createContentEnv(elements);
+      const res = engine.applyAnnotations([
+        { selector: "a", color: "#FF3B30", padding: 0 },
+        { selector: ".no-match", color: "#007AFF", padding: 0, [field]: invalidValue },
+      ]);
+
+      assertEqual(res.ok, false, "ok は false であるべき");
+      assertEqual(
+        res.error,
+        `ルール #2: '${field}' は文字列で指定してください。`,
+        "期待するエラーメッセージが返るべき"
+      );
+      assertEqual(
+        document.getElementById("__webpage-annotator-overlay-root"),
+        null,
+        "オーバーレイコンテナは生成されないべき"
+      );
+    });
+  }
+}
+
 // --- 結合テスト: sidepanel.js -> content.js ---
 
 test("integration: sidepanel の描画適用から content の onMessage 経由で startNumber が反映される", () => {
@@ -950,6 +1116,55 @@ test("integration: sidepanel の描画適用から content の onMessage 経由�
     sidepanelEnv.elements["status-message"].textContent,
     "3 件の要素にオーバーレイを描画しました。",
     "ステータスメッセージが合計件数 3 で表示されるべき"
+  );
+});
+
+test("integration: sidepanel からルール別の prefix / suffix が content に反映される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+  ];
+  const contentEnv = createContentEnv(elements);
+  const sentMessages = [];
+  const sidepanelEnv = createSidepanelEnv(jsyaml, sentMessages, (_tabId, message) =>
+    contentEnv.dispatchMessage(message)
+  );
+
+  sidepanelEnv.elements["yaml-input"].value = [
+    "startNumber: 1",
+    'numberingMode: "perRule"',
+    "rules:",
+    '  - selector: "a"',
+    '    color: "#FF3B30"',
+    '    prefix: "L-"',
+    '  - selector: "button"',
+    '    color: "#007AFF"',
+    '    prefix: "BTN "',
+    '    suffix: "件"',
+  ].join("\n");
+
+  sidepanelEnv.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+
+  assertEqual(sentMessages.length, 1, "メッセージが1回送信されるべき");
+  assertEqual(sentMessages[0].message.rules[0].prefix, "L-", "ルール1の prefix が送信されるべき");
+  assertEqual(sentMessages[0].message.rules[0].suffix, "", "ルール1の suffix は '' が送信されるべき");
+  assertEqual(sentMessages[0].message.rules[1].prefix, "BTN ", "ルール2の prefix が送信されるべき");
+  assertEqual(sentMessages[0].message.rules[1].suffix, "件", "ルール2の suffix が送信されるべき");
+
+  const container = contentEnv.document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["L-1", "L-2", "BTN 1件"],
+    "content.js でルール別の接頭辞・接尾辞付きラベルが描画されるべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    ["L-1", "L-2", "BTN 1件"],
+    "box 属性もルール別のラベルと一致するべき"
   );
 });
 
