@@ -1272,6 +1272,209 @@ for (const [label, invalidRounded] of [
   });
 }
 
+test("content: text 指定ルールは採番せず全一致要素に指定テキストを表示し data 属性も一致する", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations([
+    { selector: "a", color: "#FF3B30", padding: 0, text: " 重要 " },
+  ]);
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 2, "count は 2 であるべき");
+
+  const container = document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    [" 重要 ", " 重要 "],
+    "バッジテキストは前後空白を含め ' 重要 ' であるべき"
+  );
+  assertDeepEqual(
+    badges.map((b) => b.getAttribute("data-webpage-annotator-badge")),
+    [" 重要 ", " 重要 "],
+    "badge 属性も ' 重要 ' であるべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    [" 重要 ", " 重要 "],
+    "box 属性も ' 重要 ' であるべき"
+  );
+});
+
+test("content: numberingMode: 'global' で text ルールを挟んでも採番カウンタが増えない", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("button", { id: "b2", selectors: ["button"] }),
+    new MockElement("input", { id: "i1", selectors: ["input"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#FF9500", padding: 0, text: "重要" },
+      { selector: "input", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 1, numberingMode: "global" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 5, "count は text ルール分も含め 5 であるべき");
+
+  const badges = document
+    .getElementById("__webpage-annotator-overlay-root")
+    .querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["1", "2", "重要", "重要", "3"],
+    "text ルールは採番カウンタを増やさず 1, 2, 重要, 重要, 3 となるべき"
+  );
+});
+
+test("content: numberingMode: 'perRule' で採番ルールと text ルールが混在しても正しく描画される", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("input", { id: "i1", selectors: ["input"] }),
+    new MockElement("input", { id: "i2", selectors: ["input"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: "button", color: "#FF9500", padding: 0, text: "CTA" },
+      { selector: "input", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 10, numberingMode: "perRule" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 5, "count は 5 であるべき");
+
+  const badges = document
+    .getElementById("__webpage-annotator-overlay-root")
+    .querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["10", "11", "CTA", "10", "11"],
+    "perRule では各採番ルールが 10 から採番され、text ルールは CTA になるべき"
+  );
+});
+
+test("content: text と prefix / suffix を同時指定すると text が優先され prefix / suffix は付与されない", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("input", { id: "i1", selectors: ["input"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF3B30", padding: 0, prefix: "P-", suffix: "-S", text: "固定" },
+      { selector: "button", color: "#007AFF", padding: 0, prefix: "B-", suffix: "!", text: "" },
+      { selector: "input", color: "#34C759", padding: 0, prefix: "I-", text: null },
+    ],
+    { startNumber: 1, numberingMode: "global" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  const badges = document
+    .getElementById("__webpage-annotator-overlay-root")
+    .querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["固定", "B-1!", "I-2"],
+    "text 指定時は prefix/suffix 無視、空文字・null 時は通常採番＋prefix/suffix 適用になるべき"
+  );
+});
+
+test("content: text ルールでも重複要素の先頭優先と非表示スキップが機能する", () => {
+  const dupEl = new MockElement("button", { id: "b1", selectors: [".primary", "button"] });
+  const hiddenEl = new MockElement("button", { id: "b2", selectors: [".primary"], display: "none" });
+  const normalBtn = new MockElement("button", { id: "b3", selectors: ["button"] });
+
+  const { engine, document } = createContentEnv([dupEl, hiddenEl, normalBtn]);
+  const res = engine.applyAnnotations(
+    [
+      { selector: ".primary", color: "#FF9500", padding: 0, text: "主操作" },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: 1, numberingMode: "global" }
+  );
+
+  assertEqual(res.ok, true, "ok は true であるべき");
+  assertEqual(res.count, 2, "表示されている 2 要素のみ描画されるべき");
+  const badges = document
+    .getElementById("__webpage-annotator-overlay-root")
+    .querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["主操作", "1"],
+    "重複要素は先頭 text ルール優先、後続採番ルールは 1 から採番されるべき"
+  );
+});
+
+test("content: startNumber が MAX_SAFE_INTEGER でも text ルールは複数件描画でき直後の採番1件目も成功する", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+  ];
+  const { engine, document } = createContentEnv(elements);
+  const res = engine.applyAnnotations(
+    [
+      { selector: "a", color: "#FF9500", padding: 0, text: "固定" },
+      { selector: "button", color: "#007AFF", padding: 0 },
+    ],
+    { startNumber: Number.MAX_SAFE_INTEGER, numberingMode: "global" }
+  );
+
+  assertEqual(res.ok, true, "text ルールでカウンタが進まないため成功するべき");
+  assertEqual(res.count, 3, "count は 3 であるべき");
+  const badges = document
+    .getElementById("__webpage-annotator-overlay-root")
+    .querySelectorAllByAttr("data-webpage-annotator-badge");
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    ["固定", "固定", String(Number.MAX_SAFE_INTEGER)],
+    "固定テキスト 2 件の後に MAX_SAFE_INTEGER が描画されるべき"
+  );
+});
+
+for (const [label, invalidValue] of [
+  ["数値 (123)", 123],
+  ["真偽値 (true)", true],
+  ["配列 ([])", []],
+  ["オブジェクト ({})", {}],
+]) {
+  test(`content: 不正な text (${label}) はマッチ 0 件のルールでもエラーを返しオーバーレイを生成しない`, () => {
+    const elements = [new MockElement("a", { id: "a1", selectors: ["a"] })];
+    const { engine, document } = createContentEnv(elements);
+    const res = engine.applyAnnotations([
+      { selector: "a", color: "#FF3B30", padding: 0 },
+      { selector: ".no-match", color: "#007AFF", padding: 0, text: invalidValue },
+    ]);
+
+    assertEqual(res.ok, false, "ok は false であるべき");
+    assertEqual(
+      res.error,
+      "ルール #2: 'text' は文字列で指定してください。",
+      "期待するエラーメッセージが返るべき"
+    );
+    assertEqual(
+      document.getElementById("__webpage-annotator-overlay-root"),
+      null,
+      "オーバーレイコンテナは生成されないべき"
+    );
+  });
+}
+
 // --- 結合テスト: sidepanel.js -> content.js ---
 
 test("integration: sidepanel の描画適用から content の onMessage 経由で startNumber が反映される", () => {
@@ -1446,6 +1649,69 @@ test("integration: sidepanel の描画適用から content の onMessage 経由�
   assertEqual(badges[0].style.borderRadius, "3px 3px 0 0", "外側配置のバッジ角丸が維持されるべき");
   assertEqual(boxes[1].style.borderRadius, "6px", "内側配置の枠が4角丸になるべき");
   assertEqual(badges[1].style.borderRadius, "4px 0 3px 0", "内側配置のバッジ左上が内径 4px に揃うべき");
+});
+
+test("integration: sidepanel からルール別の text 指定が content に反映され採番カウンタを増やさない", () => {
+  const elements = [
+    new MockElement("a", { id: "a1", selectors: ["a"] }),
+    new MockElement("a", { id: "a2", selectors: ["a"] }),
+    new MockElement("button", { id: "b1", selectors: ["button"] }),
+    new MockElement("input", { id: "i1", selectors: ["input"] }),
+    new MockElement("span", { id: "s1", selectors: ["span"] }),
+  ];
+  const contentEnv = createContentEnv(elements);
+  const sentMessages = [];
+  const sidepanelEnv = createSidepanelEnv(jsyaml, sentMessages, (_tabId, message) =>
+    contentEnv.dispatchMessage(message)
+  );
+
+  sidepanelEnv.elements["yaml-input"].value = [
+    "startNumber: 1",
+    'numberingMode: "global"',
+    "rules:",
+    '  - selector: "a"',
+    '    color: "#FF3B30"',
+    '  - selector: "button"',
+    '    color: "#FF9500"',
+    '    prefix: "IGN-"',
+    '    suffix: "-IGN"',
+    '    text: "重要"',
+    '  - selector: "input"',
+    '    color: "#007AFF"',
+    '    text: ""',
+    '    prefix: "IN-"',
+    '  - selector: "span"',
+    '    color: "#34C759"',
+  ].join("\n");
+
+  sidepanelEnv.elements["apply-btn"].dispatchEvent("click");
+  flushMicrotasks();
+
+  assertEqual(sentMessages.length, 1, "メッセージが1回送信されるべき");
+  assertEqual(sentMessages[0].message.rules[0].text, null, "ルール1の text は null が送信されるべき");
+  assertEqual(sentMessages[0].message.rules[1].text, "重要", "ルール2の text は '重要' が送信されるべき");
+  assertEqual(sentMessages[0].message.rules[2].text, null, "ルール3の空文字 text は null が送信されるべき");
+
+  const container = contentEnv.document.getElementById("__webpage-annotator-overlay-root");
+  const badges = container.querySelectorAllByAttr("data-webpage-annotator-badge");
+  const boxes = container.querySelectorAllByAttr("data-webpage-annotator-box");
+  const expectedLabels = ["1", "2", "重要", "IN-3", "4"];
+
+  assertDeepEqual(
+    badges.map((b) => b.textContent),
+    expectedLabels,
+    "text ルールは採番せず、後続採番ルールが欠番なく連番になるべき"
+  );
+  assertDeepEqual(
+    boxes.map((b) => b.getAttribute("data-webpage-annotator-box")),
+    expectedLabels,
+    "box 属性も期待するラベルと一致するべき"
+  );
+  assertEqual(
+    sidepanelEnv.elements["status-message"].textContent,
+    "5 件の要素にオーバーレイを描画しました。",
+    "ステータスメッセージが総描画件数 5 で表示されるべき"
+  );
 });
 
 let passed = 0;

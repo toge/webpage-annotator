@@ -13,6 +13,7 @@
   const DEFAULT_START_NUMBER = 1;
   const DEFAULT_PREFIX = "";
   const DEFAULT_SUFFIX = "";
+  const DEFAULT_TEXT = null;
   const NUMBERING_MODE_GLOBAL = "global";
   const NUMBERING_MODE_PER_RULE = "perRule";
   const DEFAULT_NUMBERING_MODE = NUMBERING_MODE_GLOBAL;
@@ -287,6 +288,7 @@
     const seenElements = new Set();
     const warnings = [];
     const matchedEntries = [];
+    let globalNumberedCount = 0;
 
     for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex += 1) {
       const rawRule = rules[ruleIndex];
@@ -324,6 +326,19 @@
         suffix = rawRule.suffix;
       }
 
+      let text = DEFAULT_TEXT;
+      if (rawRule.text !== undefined && rawRule.text !== null) {
+        if (typeof rawRule.text !== "string") {
+          return {
+            ok: false,
+            error: `ルール #${ruleIndex + 1}: 'text' は文字列で指定してください。`,
+          };
+        }
+        if (rawRule.text !== "") {
+          text = rawRule.text;
+        }
+      }
+
       let elements;
       try {
         elements = document.querySelectorAll(selector);
@@ -342,13 +357,25 @@
         if (!isElementVisible(element)) {
           continue;
         }
+        if (text !== null) {
+          seenElements.add(element);
+          matchedEntries.push({
+            element,
+            color,
+            padding,
+            index: null,
+            label: text,
+          });
+          continue;
+        }
         const offset =
-          numberingMode === NUMBERING_MODE_PER_RULE ? ruleMatchedCount : matchedEntries.length;
+          numberingMode === NUMBERING_MODE_PER_RULE ? ruleMatchedCount : globalNumberedCount;
         const nextIndex = startNumber + offset;
         if (!Number.isSafeInteger(nextIndex)) {
           return { ok: false, error: "連番が安全な整数の上限を超えました。" };
         }
         seenElements.add(element);
+        globalNumberedCount += 1;
         ruleMatchedCount += 1;
         matchedEntries.push({
           element,
